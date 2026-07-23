@@ -5,8 +5,9 @@ import streamlit as st
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# 💡 사용할 AI 아바타 이미지 URL 지정
+# 💡 사용할 이미지 URL 지정
 AI_AVATAR_URL = "https://cdn.phototourl.com/free/2026-07-23-15287eb1-a0dc-42f5-895b-ba283e857248.png"
+SIDEBAR_HEADER_IMAGE = "https://cdn.phototourl.com/free/2026-07-23-b00d3b3d-b411-4d1e-a452-24355967b5ce.png"
 
 # 1. 페이지 기본 설정 (브라우저 탭 아이콘에도 이미지 적용)
 st.set_page_config(
@@ -62,6 +63,9 @@ client = OpenAI(
 
 # 6. 사이드바 - 대화 목록 관리 & JSON 저장/불러오기
 with st.sidebar:
+    # 🖼️ 대화 목록 위에 이미지 추가
+    st.image(SIDEBAR_HEADER_IMAGE, use_container_width=True)
+    
     st.title("💬 대화 목록")
     
     # ➕ 새 대화 시작 버튼
@@ -106,24 +110,35 @@ with st.sidebar:
 
     # 2) JSON 파일 업로드하여 불러오기
     uploaded_file = st.file_uploader("📤 JSON 대화 불러오기", type=["json"])
+    
     if uploaded_file is not None:
-        try:
-            loaded_messages = json.load(uploaded_file)
-            if isinstance(loaded_messages, list):
-                # 파일 이름을 가져와 새 대화 세션 생성
-                imported_id = str(uuid.uuid4())
-                file_title = os.path.splitext(uploaded_file.name)[0]
-                st.session_state.chats[imported_id] = {
-                    "title": f"📂 {file_title}",
-                    "messages": loaded_messages
-                }
-                st.session_state.current_chat_id = imported_id
-                st.success("대화를 성공적으로 불러왔습니다!")
-                st.rerun()
-            else:
-                st.error("올바른 대화 내역 JSON 형식이 아닙니다.")
-        except Exception as e:
-            st.error(f"파일 읽기 오류: {e}")
+        # 업로드된 파일의 고유 ID(이름+크기) 생성
+        file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+        
+        # 이전에 이미 처리한 파일이 아닌 경우에만 실행
+        if st.session_state.get("last_uploaded_file") != file_id:
+            try:
+                loaded_messages = json.load(uploaded_file)
+                if isinstance(loaded_messages, list):
+                    # 파일 이름을 가져와 새 대화 세션 생성
+                    imported_id = str(uuid.uuid4())
+                    file_title = os.path.splitext(uploaded_file.name)[0]
+                    
+                    st.session_state.chats[imported_id] = {
+                        "title": f"📂 {file_title}",
+                        "messages": loaded_messages
+                    }
+                    st.session_state.current_chat_id = imported_id
+                    
+                    # 💡 파일 처리 기록 남기기
+                    st.session_state.last_uploaded_file = file_id
+                    
+                    st.success("대화를 성공적으로 불러왔습니다!")
+                    st.rerun()
+                else:
+                    st.error("올바른 대화 내역 JSON 형식이 아닙니다.")
+            except Exception as e:
+                st.error(f"파일 읽기 오류: {e}")
 
 # 7. 메인 화면 타이틀 및 안내
 st.title("⚡ 나만의 AI 전기설비 도우미 ⚡")
@@ -138,7 +153,7 @@ if len(current_chat["messages"]) == 0:
         </div>
     """, unsafe_allow_html=True)
 
-# 8. 이전 대화 기록 출력 (🤖 이모지 대신 이미지 URL 적용)
+# 8. 이전 대화 기록 출력
 for message in current_chat["messages"]:
     avatar = "👤" if message["role"] == "user" else AI_AVATAR_URL
     with st.chat_message(message["role"], avatar=avatar):
@@ -156,7 +171,7 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
     with st.chat_message("user", avatar="👤"):
         st.markdown(prompt)
 
-    # AI 응답 처리 (스트리밍 - 🤖 이모지 대신 이미지 URL 적용)
+    # AI 응답 처리 (스트리밍)
     with st.chat_message("assistant", avatar=AI_AVATAR_URL):
         try:
             stream = client.chat.completions.create(
