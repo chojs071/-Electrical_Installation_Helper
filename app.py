@@ -123,7 +123,7 @@ with st.sidebar:
             st.error(f"파일 읽기 오류: {e}")
 
 # 7. 메인 화면 타이틀 및 안내
-st.title("나만의 AI 비서 🏠")
+st.title("⚡ 나만의 AI 전기설비 도우미 ⚡")
 st.caption(f"📌 **현재 대화:** {current_chat['title']}")
 
 # 대화 내용이 없을 때 보여줄 환영 메시지
