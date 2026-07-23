@@ -82,7 +82,7 @@ if not api_key:
     st.stop()
 
 client = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
+    base_url="https://integrate.api.nvidia.com/v1", #원하는 프로바이더로 교체가능
     api_key=api_key
 )
 
@@ -192,7 +192,7 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
             ] + current_chat["messages"]
 
             stream = client.chat.completions.create(
-                model="google/diffusiongemma-26b-a4b-it",
+                model="google/diffusiongemma-26b-a4b-it", #모델은 원하는 모델로 선택후 진행
                 messages=messages_to_send,
                 stream=True
             )
