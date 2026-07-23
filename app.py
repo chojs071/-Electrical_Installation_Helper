@@ -5,10 +5,13 @@ import streamlit as st
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# 1. 페이지 기본 설정
+# 💡 사용할 AI 아바타 이미지 URL 지정
+AI_AVATAR_URL = "https://cdn.phototourl.com/free/2026-07-23-15287eb1-a0dc-42f5-895b-ba283e857248.png"
+
+# 1. 페이지 기본 설정 (브라우저 탭 아이콘에도 이미지 적용)
 st.set_page_config(
-    page_title="나만의 AI 비서",
-    page_icon="🤖",
+    page_title="나만의 AI 전기설비 도우미",
+    page_icon=AI_AVATAR_URL,
     layout="centered"
 )
 
@@ -135,9 +138,9 @@ if len(current_chat["messages"]) == 0:
         </div>
     """, unsafe_allow_html=True)
 
-# 8. 이전 대화 기록 출력
+# 8. 이전 대화 기록 출력 (🤖 이모지 대신 이미지 URL 적용)
 for message in current_chat["messages"]:
-    avatar = "👤" if message["role"] == "user" else "🤖"
+    avatar = "👤" if message["role"] == "user" else AI_AVATAR_URL
     with st.chat_message(message["role"], avatar=avatar):
         st.markdown(message["content"])
 
@@ -153,8 +156,8 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
     with st.chat_message("user", avatar="👤"):
         st.markdown(prompt)
 
-    # AI 응답 처리 (스트리밍)
-    with st.chat_message("assistant", avatar="🤖"):
+    # AI 응답 처리 (스트리밍 - 🤖 이모지 대신 이미지 URL 적용)
+    with st.chat_message("assistant", avatar=AI_AVATAR_URL):
         try:
             stream = client.chat.completions.create(
                 model="google/diffusiongemma-26b-a4b-it",
