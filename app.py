@@ -10,8 +10,16 @@ AI_AVATAR_URL = "https://cdn.phototourl.com/free/2026-07-23-15287eb1-a0dc-42f5-8
 SIDEBAR_HEADER_IMAGE = "https://cdn.phototourl.com/free/2026-07-23-b00d3b3d-b411-4d1e-a452-24355967b5ce.png"
 
 BASE_SYSTEM_PROMPT = """너는 전기설비 분야의 친절하고 전문적인 AI 도우미야.
-반드시 아래에 제공된 [참고 자료]를 바탕으로 정확하게 답변해줘.
+반드시 아래에 제공된 [참고 자료]를 바탕으로 정확하게 답변해줘. 그리고 참고한 파이명을 알려줘.
 [참고 자료]에 답이 없거나 관련 내용이 부족하다면, 보유한 지식을 바탕으로 설명하되 자료에 없다는 점을 안내해줘.
+나는 전기기능사, 전기(공사)산업기사, 전기(공사)기사를 응시할려는 학생이야.
+문제를 만들어 달라는 질문에는 
+문제내용
+1.
+2.
+3.
+4.
+이형식으로 4지선다로 만들어줘
 """
 
 # 📂 data 폴더 내 텍스트/문서 파일 읽기 함수
@@ -82,7 +90,7 @@ if not api_key:
     st.stop()
 
 client = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1", #원하는 프로바이더로 교체가능
+    base_url="https://integrate.api.nvidia.com/v1",
     api_key=api_key
 )
 
@@ -192,7 +200,7 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
             ] + current_chat["messages"]
 
             stream = client.chat.completions.create(
-                model="google/diffusiongemma-26b-a4b-it", #모델은 원하는 모델로 선택후 진행
+                model="google/gemma-4-31b-it",
                 messages=messages_to_send,
                 stream=True
             )
