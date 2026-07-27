@@ -21,6 +21,17 @@ if not SUPABASE_URL or not SUPABASE_ANON_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
+# ✅ RLS 오류 해결: Streamlit 재실행 시 로그인 세션(토큰) 복원
+if "supabase_session" in st.session_state and st.session_state.supabase_session is not None:
+    try:
+        supabase.auth.set_session(
+            st.session_state.supabase_session.access_token,
+            st.session_state.supabase_session.refresh_token
+        )
+    except Exception:
+        # 세션이 만료된 경우 등을 대비해 예외 처리
+        st.session_state.supabase_session = None
+
 # ==========================================
 # 💡 2. 기본 설정 및 프롬프트
 # ==========================================
@@ -71,7 +82,7 @@ def email_to_user_id(email: str) -> str:
     return email.split("@")[0]
 
 # ==========================================
-# ✅ 5. [추가] Supabase DB 저장/불러오기 함수
+# 💾 5. Supabase DB 저장/불러오기 함수
 # ==========================================
 def load_user_chats_from_db(user_id: str) -> dict:
     """사용자의 대화 내역을 DB에서 불러옴"""
@@ -196,9 +207,10 @@ with st.sidebar:
                                 response = supabase.auth.sign_in_with_password({"email": email, "password": password})
                                 if response.user:
                                     st.session_state.user = response.user
+                                    # ✅ RLS 오류 해결: 세션 객체 전체 저장
+                                    st.session_state.supabase_session = response.session
                                     st.session_state.display_user_id = user_id
                                     
-                                    # ✅ 추가: 로그인 성공 시 DB에서 기존 대화 내역 불러오기
                                     db_chats = load_user_chats_from_db(response.user.id)
                                     if db_chats:
                                         st.session_state[f"chats_{response.user.id}"] = db_chats
@@ -243,6 +255,8 @@ with st.sidebar:
                                 
                                 if response.user and response.session:
                                     st.session_state.user = response.user
+                                    # ✅ RLS 오류 해결: 세션 객체 전체 저장
+                                    st.session_state.supabase_session = response.session
                                     st.session_state.display_user_id = new_user_id
                                     st.success(f"🎉 {new_user_id}님, 환영합니다! 자동으로 로그인되었습니다.")
                                     st.rerun()
@@ -253,6 +267,7 @@ with st.sidebar:
                                     })
                                     if login_response.user:
                                         st.session_state.user = login_response.user
+                                        st.session_state.supabase_session = login_response.session
                                         st.session_state.display_user_id = new_user_id
                                         st.success(f"🎉 {new_user_id}님, 환영합니다!")
                                         st.rerun()
@@ -277,10 +292,8 @@ with st.sidebar:
         if st.button("🚪 로그아웃", use_container_width=True, type="secondary"):
             supabase.auth.sign_out()
             st.session_state.user = None
+            st.session_state.supabase_session = None # ✅ 세션 토큰도 함께 삭제
             st.session_state.display_user_id = None
-            # ✅ 추가: 로그아웃 시 게스트 키로 초기화 방지 위해 명시적 삭제
-            if f"chats_{st.session_state.user.id}" in st.session_state:
-                del st.session_state[f"chats_{st.session_state.user.id}"]
             st.rerun()
         
         st.markdown("---")
@@ -379,7 +392,6 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
     
     current_chat["messages"].append({"role": "user", "content": prompt})
     
-    # ✅ 추가: 사용자 메시지 입력 시에도 DB 저장 (로그인 사용자만)
     if is_logged_in:
         save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
 
@@ -406,7 +418,6 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
                 response_content = st.write_stream(stream)
                 current_chat["messages"].append({"role": "assistant", "content": response_content})
                 
-                # ✅ 추가: AI 응답 완료 후 최종 대화 내역 DB 저장 (로그인 사용자만)
                 if is_logged_in:
                     save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
                     
