@@ -5,7 +5,7 @@ import streamlit as st
 from openai import OpenAI
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from gotrue.errors import AuthApiError
+from supabase_auth.errors import AuthApiError  # ✅ 1. gotrue -> supabase_auth 로 변경
 
 # ==========================================
 # 🔐 1. Supabase 클라이언트 초기화
@@ -29,7 +29,6 @@ if "supabase_session" in st.session_state and st.session_state.supabase_session 
             st.session_state.supabase_session.refresh_token
         )
     except Exception:
-        # 세션이 만료된 경우 등을 대비해 예외 처리
         st.session_state.supabase_session = None
 
 # ==========================================
@@ -49,6 +48,8 @@ BASE_SYSTEM_PROMPT = """너는 전기설비 분야의 친절하고 전문적인 
 3.
 4.
 이 형식으로 4지선다로 만들어줘.
+
+만약 [과거 대화 참고 자료]가 제공된다면, 사용자의 이전 질문 맥락과 내가 previously 답변한 내용을 고려하여 일관성 있고 연속성 있는 답변을 해줘.
 """
 
 # ==========================================
@@ -85,7 +86,6 @@ def email_to_user_id(email: str) -> str:
 # 💾 5. Supabase DB 저장/불러오기 함수
 # ==========================================
 def load_user_chats_from_db(user_id: str) -> dict:
-    """사용자의 대화 내역을 DB에서 불러옴"""
     try:
         response = supabase.table("user_chats").select("*").eq("user_id", user_id).order("updated_at", desc=True).execute()
         if response.data:
@@ -101,7 +101,6 @@ def load_user_chats_from_db(user_id: str) -> dict:
     return None
 
 def save_chat_to_db(user_id: str, chat_id: str, title: str, messages: list):
-    """현재 대화 내역을 DB에 저장 (Upsert)"""
     try:
         supabase.table("user_chats").upsert({
             "id": chat_id,
@@ -114,7 +113,41 @@ def save_chat_to_db(user_id: str, chat_id: str, title: str, messages: list):
         st.error(f"대화 저장 실패: {e}")
 
 # ==========================================
-# 🚀 6. 페이지 기본 설정
+# ✅ 6. [추가] 과거 대화 참고 자료 수집 함수
+# ==========================================
+def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_id: str, max_messages_per_chat: int = 10) -> str:
+    """선택된 과거 대화들의 내용을 참고 자료 문자열로 구성"""
+    if not selected_ids:
+        return ""
+    
+    ref_parts = []
+    for chat_id in selected_ids:
+        if chat_id == current_chat_id:
+            continue  # 현재 대화는 제외
+        if chat_id not in chats_dict:
+            continue
+        
+        chat = chats_dict[chat_id]
+        title = chat.get("title", "제목 없음")
+        messages = chat.get("messages", [])
+        
+        # 최근 N개 메시지만 참고 (토큰 절약)
+        recent_messages = messages[-max_messages_per_chat:]
+        
+        if not recent_messages:
+            continue
+        
+        chat_content = f"\n--- [과거 대화: {title}] ---\n"
+        for msg in recent_messages:
+            role_kr = "사용자" if msg["role"] == "user" else "AI"
+            chat_content += f"{role_kr}: {msg['content']}\n"
+        
+        ref_parts.append(chat_content)
+    
+    return "\n".join(ref_parts)
+
+# ==========================================
+# 🚀 7. 페이지 기본 설정
 # ==========================================
 st.set_page_config(page_title="나만의 AI 전기설비 도우미", page_icon=AI_AVATAR_URL, layout="centered")
 
@@ -137,17 +170,25 @@ st.markdown("""
         border-left: 5px solid #F59E0B;
         font-size: 0.9em;
     }
+    .ref-notice {
+        background-color: #ECFDF5;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 10px;
+        border-left: 4px solid #10B981;
+        font-size: 0.85em;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🏠 7. 메인 화면 타이틀
+# 🏠 8. 메인 화면 타이틀
 # ==========================================
 st.title("⚡ 나만의 AI 전기설비 도우미 ⚡")
 st.markdown("<p style='text-align: center; color: gray;'>전기 기능사/산업기사/기사 합격을 위한 맞춤형 AI 튜터</p>", unsafe_allow_html=True)
 
 # ==========================================
-# 🔍 8. 로그인 상태 확인 및 세션 키 결정
+# 🔍 9. 로그인 상태 확인 및 세션 키 결정
 # ==========================================
 is_logged_in = "user" in st.session_state and st.session_state.user is not None
 
@@ -161,7 +202,7 @@ else:
     display_user_id = "게스트"
 
 # ==========================================
-# 💾 9. 세션 상태 초기화
+# 💾 10. 세션 상태 초기화
 # ==========================================
 if chats_key not in st.session_state:
     initial_id = str(uuid.uuid4())
@@ -171,14 +212,19 @@ if chats_key not in st.session_state:
 if current_chat_key not in st.session_state:
     st.session_state[current_chat_key] = list(st.session_state[chats_key].keys())[0]
 
+# ✅ 과거 대화 참고 선택 상태 초기화
+ref_selection_key = f"ref_selection_{display_user_id}"
+if ref_selection_key not in st.session_state:
+    st.session_state[ref_selection_key] = []
+
 current_id = st.session_state[current_chat_key]
 current_chat = st.session_state[chats_key][current_id]
 
 # ==========================================
-# 👤 10. 사이드바 - 계정 메뉴 & 대화 목록
+# 👤 11. 사이드바 - 계정 메뉴 & 대화 목록 & 과거 대화 참고
 # ==========================================
 with st.sidebar:
-    st.image(SIDEBAR_HEADER_IMAGE, use_container_width=True)
+    st.image(SIDEBAR_HEADER_IMAGE, width="stretch")  # ✅ 2. use_container_width -> width="stretch"
     
     if not is_logged_in:
         st.markdown("### 👤 계정 메뉴")
@@ -195,7 +241,7 @@ with st.sidebar:
             with st.form("login_form", clear_on_submit=True):
                 user_id = st.text_input("아이디", placeholder="아이디를 입력하세요")
                 password = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요")
-                submit_button = st.form_submit_button("로그인", use_container_width=True, type="primary")
+                submit_button = st.form_submit_button("로그인", width="stretch", type="primary")  # ✅ 수정
                 
                 if submit_button:
                     if not user_id or not password:
@@ -207,7 +253,6 @@ with st.sidebar:
                                 response = supabase.auth.sign_in_with_password({"email": email, "password": password})
                                 if response.user:
                                     st.session_state.user = response.user
-                                    # ✅ RLS 오류 해결: 세션 객체 전체 저장
                                     st.session_state.supabase_session = response.session
                                     st.session_state.display_user_id = user_id
                                     
@@ -233,7 +278,7 @@ with st.sidebar:
                 new_user_id = st.text_input("새 아이디", placeholder="3자 이상 영문/숫자")
                 new_password = st.text_input("새 비밀번호", type="password", placeholder="6자 이상")
                 confirm_password = st.text_input("비밀번호 확인", type="password", placeholder="다시 입력")
-                signup_button = st.form_submit_button("회원가입", use_container_width=True, type="primary")
+                signup_button = st.form_submit_button("회원가입", width="stretch", type="primary")  # ✅ 수정
                 
                 if signup_button:
                     if not new_user_id or not new_password or not confirm_password:
@@ -255,7 +300,6 @@ with st.sidebar:
                                 
                                 if response.user and response.session:
                                     st.session_state.user = response.user
-                                    # ✅ RLS 오류 해결: 세션 객체 전체 저장
                                     st.session_state.supabase_session = response.session
                                     st.session_state.display_user_id = new_user_id
                                     st.success(f"🎉 {new_user_id}님, 환영합니다! 자동으로 로그인되었습니다.")
@@ -289,18 +333,21 @@ with st.sidebar:
         st.markdown("### 👤 계정 메뉴")
         st.markdown(f"### 👋 안녕하세요, **{display_user_id}**님!")
         
-        if st.button("🚪 로그아웃", use_container_width=True, type="secondary"):
+        if st.button("🚪 로그아웃", width="stretch", type="secondary"):  # ✅ 수정
             supabase.auth.sign_out()
             st.session_state.user = None
-            st.session_state.supabase_session = None # ✅ 세션 토큰도 함께 삭제
+            st.session_state.supabase_session = None
             st.session_state.display_user_id = None
             st.rerun()
         
         st.markdown("---")
     
+    # ==========================================
+    # 💬 대화 목록
+    # ==========================================
     st.title("💬 대화 목록")
     
-    if st.button("➕ 새 대화 시작", use_container_width=True, type="primary"):
+    if st.button("➕ 새 대화 시작", width="stretch", type="primary"):  # ✅ 수정
         new_id = str(uuid.uuid4())
         new_title = f"새로운 대화 {len(st.session_state[chats_key]) + 1}"
         st.session_state[chats_key][new_id] = {"title": new_title, "messages": []}
@@ -326,8 +373,59 @@ with st.sidebar:
         st.session_state[current_chat_key] = selected_id
         st.rerun()
     
+    # ==========================================
+    # ✅ [추가] 과거 대화 참고 섹션 (로그인 사용자만)
+    # ==========================================
+    if is_logged_in:
+        st.markdown("---")
+        st.markdown("### 📚 과거 대화 참고")
+        st.markdown("""
+            <div class="ref-notice">
+                💡 체크한 과거 대화 내용을 AI가 참고하여 답변합니다.<br>
+                (최대 3개 선택 가능, 각 대화의 최근 10개 메시지만 참고)
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # 현재 대화 제외하고 다른 대화들만 표시
+        other_chats = {cid: info for cid, info in st.session_state[chats_key].items() if cid != current_id}
+        
+        if not other_chats:
+            st.info("참고할 다른 대화가 없습니다. 여러 대화를 나누면 여기서 선택할 수 있어요!")
+        else:
+            # 최대 3개 제한을 위한 로직
+            current_selection = st.session_state[ref_selection_key]
+            
+            # 현재 선택된 대화들이 여전히 존재하는지 확인 (삭제된 경우 제거)
+            current_selection = [cid for cid in current_selection if cid in other_chats]
+            
+            new_selection = []
+            for cid, info in other_chats.items():
+                is_checked = cid in current_selection
+                # 3개 초과 시 선택된 것만 유지
+                disabled = (not is_checked) and (len(current_selection) >= 3)
+                
+                checked = st.checkbox(
+                    f"📖 {info['title']}",
+                    value=is_checked,
+                    key=f"ref_chk_{cid}",
+                    disabled=disabled,
+                    help="이 대화를 참고 자료로 포함"
+                )
+                if checked:
+                    new_selection.append(cid)
+            
+            # 선택 상태 업데이트
+            if new_selection != current_selection:
+                st.session_state[ref_selection_key] = new_selection
+                st.rerun()
+            
+            if current_selection:
+                st.caption(f"✨ {len(current_selection)}개 대화 참고 중")
+            else:
+                st.caption("참고할 대화를 선택하지 않았습니다.")
+    
     st.markdown("---")
-    st.subheader("📁 대화 백업 & 불러오기")
+    st.subheader("📁 수동으로 대화 백업 & 불러오기")
     
     current_messages = current_chat["messages"]
     json_data = json.dumps(current_messages, ensure_ascii=False, indent=2)
@@ -337,7 +435,7 @@ with st.sidebar:
         data=json_data,
         file_name=f"{current_chat['title']}_{display_user_id}.json",
         mime="application/json",
-        use_container_width=True,
+        width="stretch",  # ✅ 수정
         disabled=len(current_messages) == 0
     )
     
@@ -361,7 +459,7 @@ with st.sidebar:
                 st.error(f"파일 읽기 오류: {e}")
 
 # ==========================================
-# 💬 11. 메인 영역 - 채팅 UI
+# 💬 12. 메인 영역 - 채팅 UI
 # ==========================================
 if not is_logged_in:
     st.markdown("""
@@ -370,6 +468,18 @@ if not is_logged_in:
             👉 좌측 사이드바에서 <b>회원가입</b> 후 로그인하면 대화가 영구 저장됩니다!
         </div>
     """, unsafe_allow_html=True)
+
+# ✅ 참고 중인 과거 대화 표시 (메인 영역 상단)
+if is_logged_in and st.session_state[ref_selection_key]:
+    ref_titles = [st.session_state[chats_key][cid]["title"] 
+                  for cid in st.session_state[ref_selection_key] 
+                  if cid in st.session_state[chats_key]]
+    if ref_titles:
+        st.markdown(f"""
+            <div class="ref-notice">
+                📚 <b>참고 중인 과거 대화:</b> {', '.join(ref_titles)}
+            </div>
+        """, unsafe_allow_html=True)
 
 st.caption(f"📌 **현재 대화:** {current_chat['title']} | 👤 {display_user_id}")
 
@@ -407,11 +517,27 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
                 client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key)
                 
                 data_context = load_data_folder()
-                system_prompt = BASE_SYSTEM_PROMPT + (f"\n\n[참고 자료]\n{data_context}" if data_context else "")
+                
+                # ✅ 과거 대화 참고 자료 수집
+                ref_context = ""
+                if is_logged_in and st.session_state[ref_selection_key]:
+                    ref_context = collect_reference_chats(
+                        st.session_state[chats_key],
+                        st.session_state[ref_selection_key],
+                        current_id
+                    )
+                
+                # ✅ 시스템 프롬프트 구성 (파일 자료 + 과거 대화 참고 자료)
+                system_prompt = BASE_SYSTEM_PROMPT
+                if data_context:
+                    system_prompt += f"\n\n[참고 자료]\n{data_context}"
+                if ref_context:
+                    system_prompt += f"\n\n[과거 대화 참고 자료]\n{ref_context}"
+                
                 messages_to_send = [{"role": "system", "content": system_prompt}] + current_chat["messages"]
                 
                 stream = client.chat.completions.create(
-                    model="google/gemma-4-31b-it",
+                    model="minimaxai/minimax-m3",
                     messages=messages_to_send,
                     stream=True
                 )
