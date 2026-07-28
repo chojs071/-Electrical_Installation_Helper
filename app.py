@@ -509,86 +509,78 @@ for message in current_chat["messages"]:
         st.markdown(message["content"])
 
 # ==========================================
-# 📌 하단 고정 CSS 및 레이아웃 설정
+# 📌 하단 고정 및 1:3 비율 레이아웃을 위한 CSS
 # ==========================================
 st.markdown("""
     <style>
-    /* 1. 본문 영역 하단 여백 확보 (입력창에 메시지가 가려지지 않도록) */
+    /* 1. 채팅 메시지가 하단 입력창에 가려지지 않도록 하단 여백 확보 */
     .main .block-container {
-        padding-bottom: 120px !important;
+        padding-bottom: 160px !important;
     }
     
-    /* 2. st.chat_input을 포함하는 컨테이너를 하단에 고정 (Sticky) */
-    /* Streamlit의 내부 구조를 분석하여 입력창이 있는 영역만 선택 */
-    div:has(> div > div > div[data-testid="stChatInput"]) {
-        position: sticky !important;
-        bottom: 0 !important;
-        background-color: #ffffff !important;
-        padding: 15px 0 10px 0 !important;
-        border-top: 2px solid #e2e8f0 !important;
-        z-index: 999 !important;
-        box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.05) !important;
-    }
-    
-    /* 3. 파일 업로더 스타일 조정 (1:3 비율에 맞게 컴팩트하게) */
+    /* 2. 파일 업로더를 컴팩트하고 깔끔하게 조정 (1:3 비율에 맞게) */
     .stFileUploader [data-testid="stFileUploaderDropzone"] {
-        min-height: 45px !important;
+        min-height: 48px !important;
         padding: 8px !important;
         border: 1px dashed #cbd5e1 !important;
         border-radius: 8px !important;
         background-color: #f8fafc !important;
+        transition: all 0.2s ease;
+    }
+    .stFileUploader [data-testid="stFileUploaderDropzone"]:hover {
+        border-color: #3b82f6 !important;
+        background-color: #eff6ff !important;
     }
     .stFileUploader label {
-        display: none !important; /* '이미지 첨부' 텍스트 숨김 */
+        display: none !important; /* 불필요한 라벨 텍스트 숨김 */
     }
     
-    /* 4. 이미지 미리보기 영역 스타일 */
-    .image-preview-container {
-        background: #f1f5f9;
-        padding: 8px;
+    /* 3. 첨부된 이미지 미리보기 스타일 */
+    .image-preview-box {
+        background-color: #f1f5f9;
         border-radius: 8px;
-        margin-bottom: 10px;
+        padding: 8px 12px;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
+        margin-bottom: 8px;
+        border: 1px solid #e2e8f0;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# 채팅방 변경 시 대기 이미지 초기화
+# 채팅방 변경 시 대기 중인 이미지 초기화 (다른 채팅으로 이미지 유출 방지)
 if "pending_image" not in st.session_state or st.session_state.get("last_active_chat") != current_id:
     st.session_state.pending_image = None
     st.session_state.last_active_chat = current_id
 
-# ✅ 대기 중인 이미지 미리보기 (하단 고정 영역 내부 상단)
+# ==========================================
+# 📌 1:3 비율 입력 영역 (하단 고정 입력창 바로 위)
+# ==========================================
+# 대기 중인 이미지가 있으면 미리보기 표시
 if st.session_state.pending_image is not None:
-    col_prev, col_clear = st.columns([5, 1])
-    with col_prev:
-        st.markdown(
-            f"""
-            <div class="image-preview-container">
-                <div style="flex-shrink: 0;">
-                    <img src="data:{st.session_state.pending_image.type};base64,{base64.b64encode(st.session_state.pending_image.read()).decode()}" width="60" style="border-radius: 4px;">
-                </div>
-                <div style="flex-grow: 1;">
-                    <div style="font-size: 0.85rem; font-weight: 600; color: #334155;">📎 이미지 첨부됨</div>
-                    <div style="font-size: 0.75rem; color: #64748b;">텍스트 입력 후 Enter로 함께 전송됩니다</div>
-                </div>
+    st.markdown(
+        f"""
+        <div class="image-preview-box">
+            <img src="data:{st.session_state.pending_image.type};base64,{base64.b64encode(st.session_state.pending_image.read()).decode()}" width="50" style="border-radius: 4px; object-fit: cover;">
+            <div style="flex-grow: 1;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: #334155;">📎 이미지 첨부됨</div>
+                <div style="font-size: 0.75rem; color: #64748b;">텍스트를 입력하고 Enter를 누르면 함께 전송됩니다.</div>
             </div>
-            """, 
-            unsafe_allow_html=True
-        )
-        st.session_state.pending_image.seek(0) # 파일 포인터 리셋
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+    st.session_state.pending_image.seek(0) # 파일 포인터 리셋
+    
+    # 제거 버튼 (작은 컬럼 사용)
+    _, col_clear = st.columns([5, 1])
     with col_clear:
-        if st.button("🗑️", key="clear_pending", help="첨부된 이미지 제거"):
+        if st.button("🗑️ 첨부 취소", key="clear_pending", use_container_width=True):
             st.session_state.pending_image = None
             st.rerun()
 
-# ==========================================
-# 📌 하단 고정 1:3 비율 입력창
-# ==========================================
-# Streamlit의 columns를 사용하여 1:3 비율로 배치
-# 이 영역은 위의 CSS에 의해 자동으로 하단에 sticky 됩니다.
+# 1:3 비율로 컬럼 분할
 col_img, col_txt = st.columns([1, 3], gap="small")
 
 with col_img:
@@ -605,27 +597,30 @@ with col_img:
     if uploaded_file is not None:
         st.session_state.pending_image = uploaded_file
 
-send_triggered = False
-send_text = ""
-
 with col_txt:
-    # st.chat_input은 기본적으로 하단 고정 및 Enter 전송 기능을 가짐
-    prompt = st.chat_input("메시지를 입력하세요... (Enter로 전송)")
-    
-    if prompt:
-        send_triggered = True
-        send_text = prompt
+    # 시각적 안내 문구 (입력창이 아래에 있음을 자연스럽게 유도)
+    st.markdown(
+        "<div style='display: flex; align-items: center; height: 48px; padding-left: 12px; color: #64748b; font-size: 0.9rem; background-color: #ffffff; border: 1px solid transparent; border-radius: 8px;'>"
+        "👇 아래 입력창에 메시지를 작성하세요"
+        "</div>", 
+        unsafe_allow_html=True
+    )
 
 # ==========================================
-# 🚀 전송 로직 (이미지 + 텍스트 동시 처리)
+# 🚀 하단 고정 입력창 및 전송 로직
 # ==========================================
-if send_triggered:
+# st.chat_input은 Streamlit에서 자동으로 페이지 하단에 고정됩니다.
+prompt = st.chat_input("메시지를 입력하세요... (Enter로 전송)")
+
+if prompt:
+    # 1. 대화 제목 자동 생성
     if len(current_chat["messages"]) == 0:
-        current_chat["title"] = (send_text[:15] + "...") if send_text else "이미지 분석"
+        current_chat["title"] = (prompt[:15] + "...") if prompt else "이미지 분석"
     
-    new_message = {"role": "user", "content": send_text}
+    # 2. 새 메시지 구성
+    new_message = {"role": "user", "content": prompt}
     
-    # 대기 중인 이미지가 있다면 함께 묶어서 전송
+    # 3. 대기 중인 이미지가 있다면 함께 묶어서 전송
     if st.session_state.pending_image is not None:
         image_bytes = st.session_state.pending_image.read()
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -636,17 +631,18 @@ if send_triggered:
         # 전송 후 대기 이미지 초기화 (중복 전송 방지)
         st.session_state.pending_image = None
     
+    # 4. 메시지 저장
     current_chat["messages"].append(new_message)
     if is_logged_in:
         save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
 
-    # 사용자 메시지 화면에 즉시 표시
+    # 5. 사용자 메시지 화면에 즉시 표시
     with st.chat_message("user", avatar="👤"):
         if "image" in new_message:
             st.image(f"data:{new_message['image']['mime_type']};base64,{new_message['image']['base64']}", width=300)
         st.markdown(new_message["content"])
     
-    # AI 응답 처리
+    # 6. AI 응답 처리
     with st.chat_message("assistant", avatar=AI_AVATAR_URL):
         try:
             api_key = os.getenv("NVIDIA_API_KEY")
@@ -659,7 +655,7 @@ if send_triggered:
                     timeout=120.0
                 )
                 
-                data_context = load_relevant_data(send_text if send_text else "이미지 분석")
+                data_context = load_relevant_data(prompt if prompt else "이미지 분석")
                 
                 ref_context = ""
                 if is_logged_in and st.session_state[ref_selection_key]:
