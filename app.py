@@ -4,16 +4,16 @@ import uuid
 import warnings
 import base64
 import streamlit as st
+import streamlit.components.v1 as components
 from openai import OpenAI, APITimeoutError
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from supabase_auth.errors import AuthApiError
 
-# ⚠️ gotrue 및 기타 DeprecationWarning 경고 무시 설정
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ==========================================
-# 🔐 1. Supabase 클라이언트 초기화
+#  1. Supabase 클라이언트 초기화
 # ==========================================
 load_dotenv()
 
@@ -158,9 +158,116 @@ st.markdown("""
     .info-box { background-color: #F1F5F9; border-radius: 10px; padding: 15px; margin-bottom: 20px; border-left: 5px solid #3B82F6; }
     .guest-notice { background-color: #FEF3C7; border-radius: 10px; padding: 12px; margin-bottom: 15px; border-left: 5px solid #F59E0B; font-size: 0.9em; }
     .ref-notice { background-color: #ECFDF5; border-radius: 8px; padding: 10px; margin-bottom: 10px; border-left: 4px solid #10B981; font-size: 0.85em; }
-    /* 업로더 컴팩트하게 조정 */
-    .stFileUploader { margin-bottom: 0px; }
-    .stFileUploader > div { padding: 0px; }
+    
+    /* 커스텀 입력창 스타일 */
+    .custom-chat-input-wrapper {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: calc(100% - 40px);
+        max-width: 800px;
+        z-index: 1000;
+    }
+    
+    .chat-input-container {
+        display: flex;
+        align-items: center;
+        background: #f8f9fa;
+        border-radius: 24px;
+        padding: 8px 16px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+        border: 1px solid #e5e7eb;
+    }
+    
+    .attach-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: none;
+        background: white;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        color: #6b7280;
+        transition: all 0.2s;
+        flex-shrink: 0;
+    }
+    
+    .attach-btn:hover {
+        background: #e5e7eb;
+        color: #374151;
+    }
+    
+    .text-input {
+        flex: 1;
+        border: none;
+        background: transparent;
+        padding: 8px 16px;
+        font-size: 15px;
+        outline: none;
+        resize: none;
+        max-height: 120px;
+        font-family: inherit;
+    }
+    
+    .send-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: none;
+        background: #3b82f6;
+        color: white;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        transition: all 0.2s;
+        flex-shrink: 0;
+    }
+    
+    .send-btn:hover {
+        background: #2563eb;
+    }
+    
+    .send-btn:disabled {
+        background: #d1d5db;
+        cursor: not-allowed;
+    }
+    
+    .image-preview-container {
+        margin-top: 8px;
+        padding: 8px;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        display: none;
+    }
+    
+    .image-preview-container img {
+        max-width: 150px;
+        max-height: 100px;
+        border-radius: 8px;
+    }
+    
+    .remove-image {
+        margin-left: 8px;
+        padding: 4px 8px;
+        background: #ef4444;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+    }
+    
+    /* 기존 Streamlit 입력창 숨기기 */
+    .stChatInput {
+        display: none !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -171,7 +278,7 @@ st.title("⚡ 나만의 AI 전기설비 도우미 ⚡")
 st.markdown("<p style='text-align: center; color: gray;'>전기 기능사/산업기사/기사 합격을 위한 맞춤형 AI 튜터</p>", unsafe_allow_html=True)
 
 # ==========================================
-# 🔍 9. 로그인 상태 확인 및 세션 키 결정
+#  9. 로그인 상태 확인 및 세션 키 결정
 # ==========================================
 is_logged_in = "user" in st.session_state and st.session_state.user is not None
 
@@ -185,7 +292,7 @@ else:
     display_user_id = "게스트"
 
 # ==========================================
-# 💾 10. 세션 상태 초기화
+#  10. 세션 상태 초기화
 # ==========================================
 if chats_key not in st.session_state:
     initial_id = str(uuid.uuid4())
@@ -203,7 +310,7 @@ current_id = st.session_state[current_chat_key]
 current_chat = st.session_state[chats_key][current_id]
 
 # ==========================================
-# 👤 11. 사이드바 (계정, 대화목록, 백업)
+# 👤 11. 사이드바
 # ==========================================
 with st.sidebar:
     st.image(SIDEBAR_HEADER_IMAGE, width="stretch")
@@ -211,7 +318,7 @@ with st.sidebar:
     if not is_logged_in:
         st.markdown("### 👤 계정 메뉴")
         st.markdown('<div class="guest-notice">🎭 <b>게스트 모드</b>로 이용 중입니다.<br>💡 로그인하면 대화가 <b>영구 저장</b>됩니다!</div>', unsafe_allow_html=True)
-        auth_tab1, auth_tab2 = st.tabs(["🔑 로그인", "📝 회원가입"])
+        auth_tab1, auth_tab2 = st.tabs([" 로그인", "📝 회원가입"])
         with auth_tab1:
             with st.form("login_form", clear_on_submit=True):
                 user_id = st.text_input("아이디", placeholder="아이디를 입력하세요")
@@ -256,13 +363,13 @@ with st.sidebar:
                                     st.session_state.user = response.user
                                     st.session_state.supabase_session = response.session
                                     st.session_state.display_user_id = new_user_id
-                                    st.success(f"🎉 {new_user_id}님, 환영합니다!")
+                                    st.success(f" {new_user_id}님, 환영합니다!")
                                     st.rerun()
                             except Exception as e:
-                                st.error(f"회원가입 실패: {e}")
+                                st.error(f"회원가입 실: {e}")
         st.markdown("---")
     else:
-        st.markdown("### 👤 계정 메뉴")
+        st.markdown("###  계정 메뉴")
         st.markdown(f"### 👋 안녕하세요, **{display_user_id}**님!")
         if st.button("🚪 로그아웃", width="stretch", type="secondary"):
             supabase.auth.sign_out()
@@ -285,7 +392,7 @@ with st.sidebar:
         st.session_state[current_chat_key] = list(chat_options.keys())[0]
         st.rerun()
     
-    selected_id = st.radio("대화 선택", options=list(chat_options.keys()), format_func=lambda x: chat_options[x], index=list(chat_options.keys()).index(current_id))
+    selected_id = st.radio("대화 선", options=list(chat_options.keys()), format_func=lambda x: chat_options[x], index=list(chat_options.keys()).index(current_id))
     if selected_id != current_id:
         st.session_state[current_chat_key] = selected_id
         st.rerun()
@@ -312,7 +419,7 @@ with st.sidebar:
                 st.caption(f"✨ {len(current_selection)}개 대화 참고 중")
     
     st.markdown("---")
-    st.markdown("### 📁 수동으로 대화 백업 & 불러오기")
+    st.markdown("###  수동으로 대화 백업 & 불러오기")
     json_data = json.dumps(current_chat["messages"], ensure_ascii=False, indent=2)
     st.download_button(label="📥 현재 대화 JSON 저장", data=json_data, file_name=f"{current_chat['title']}_{display_user_id}.json", mime="application/json", width="stretch", disabled=len(current_chat["messages"]) == 0)
     
@@ -333,20 +440,20 @@ with st.sidebar:
                 st.error(f"파일 읽기 오류: {e}")
 
 # ==========================================
-# 💬 12. 메인 영역 - 채팅 UI (이미지 지원 최적화)
+#  12. 메인 영역 - 채팅 UI
 # ==========================================
 if not is_logged_in:
-    st.markdown('<div class="guest-notice">🎭 <b>게스트 모드</b>로 이용 중입니다. 대화는 브라우저를 닫으면 사라집니다.<br>👉 좌측 사이드바에서 <b>회원가입</b> 후 로그인하면 대화가 영구 저장됩니다!</div>', unsafe_allow_html=True)
+    st.markdown('<div class="guest-notice"> <b>게스트 모드</b>로 이용 중입니다. 대화는 브라우저를 닫으면 사라집니다.<br>👉 좌측 사이드바에서 <b>회원가입</b> 후 로그인하면 대화가 영구 저장됩니다!</div>', unsafe_allow_html=True)
 
 if is_logged_in and st.session_state[ref_selection_key]:
     ref_titles = [st.session_state[chats_key][cid]["title"] for cid in st.session_state[ref_selection_key] if cid in st.session_state[chats_key]]
     if ref_titles:
         st.markdown(f'<div class="ref-notice">📚 <b>참고 중인 과거 대화:</b> {", ".join(ref_titles)}</div>', unsafe_allow_html=True)
 
-st.caption(f"📌 **현재 대화:** {current_chat['title']} | 👤 {display_user_id}")
+st.caption(f"📌 **현재 대화:** {current_chat['title']} |  {display_user_id}")
 
 if len(current_chat["messages"]) == 0:
-    st.markdown('<div class="info-box">👋 <b>반갑습니다!</b> 무엇이든 물어보세요.<br>예시: <i>"접지공사 종류에 대해 알려줘"</i> 또는 <i>우측 [+] 아이콘으로 전기 배선도 사진을 업로드하세요.</i></div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-box">👋 <b>반갑습니다!</b> 무엇이든 물어보세요.<br>예시: <i>"접지공사 종류에 대해 알려줘"</i> 또는 <i>좌측 + 버튼으로 전기 배선도 사진을 업로드하세요.</i></div>', unsafe_allow_html=True)
 
 # ✅ 기존 메시지 렌더링 (이미지 포함 지원)
 for message in current_chat["messages"]:
@@ -356,99 +463,270 @@ for message in current_chat["messages"]:
             st.image(f"data:{message['image']['mime_type']};base64,{message['image']['base64']}", width=300)
         st.markdown(message["content"])
 
-# ✅ 채팅 입력 영역 레이아웃 (입력창 + 이미지 첨부 + 전송 버튼)
-col_input, col_upload, col_send = st.columns([0.82, 0.09, 0.09])
+# ==========================================
+#  13. 커스텀 입력창 (HTML/CSS/JS)
+# ==========================================
+custom_input_html = f"""
+<style>
+.chat-input-container {{
+    display: flex;
+    align-items: center;
+    background: #f8f9fa;
+    border-radius: 24px;
+    padding: 8px 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    border: 1px solid #e5e7eb;
+}}
 
-with col_input:
-    prompt = st.chat_input("메시지를 입력하세요...")
+.attach-btn {{
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    color: #6b7280;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}}
 
-with col_upload:
-    # 🌟 핵심: 메시지 개수를 키에 포함시켜 전송 시 자동으로 업로더가 초기화되도록 설정
-    uploader_key = f"uploader_{current_id}_{len(current_chat['messages'])}"
-    uploaded_image = st.file_uploader(
-        "", 
-        type=["png", "jpg", "jpeg"], 
-        key=uploader_key,
-        label_visibility="collapsed",
-        help="이미지 첨부"
-    )
+.attach-btn:hover {{
+    background: #e5e7eb;
+    color: #374151;
+}}
 
-with col_send:
-    send_clicked = st.button("📤", use_container_width=True, help="메시지 전송")
+.text-input {{
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 8px 16px;
+    font-size: 15px;
+    outline: none;
+    resize: none;
+    max-height: 120px;
+    font-family: inherit;
+}}
 
-# ✅ 전송 로직: 텍스트 입력 시, 또는 전송 버튼 클릭 + 이미지 첨부 시
-if prompt or (send_clicked and uploaded_image is not None):
-    if len(current_chat["messages"]) == 0:
-        current_chat["title"] = (prompt[:15] + "...") if prompt else "이미지 분석"
+.send-btn {{
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: #3b82f6;
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}}
+
+.send-btn:hover {{
+    background: #2563eb;
+}}
+
+.send-btn:disabled {{
+    background: #d1d5db;
+    cursor: not-allowed;
+}}
+
+.image-preview-container {{
+    margin-top: 8px;
+    padding: 8px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    display: none;
+}}
+
+.image-preview-container img {{
+    max-width: 150px;
+    max-height: 100px;
+    border-radius: 8px;
+}}
+
+.remove-image {{
+    margin-left: 8px;
+    padding: 4px 8px;
+    background: #ef4444;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}}
+</style>
+
+<div class="chat-input-container">
+    <button class="attach-btn" onclick="document.getElementById('file-input-{current_id}').click()">+</button>
+    <input type="file" id="file-input-{current_id}" accept="image/png,image/jpeg,image/jpg" style="display:none" onchange="handleFileSelect(event)">
+    <textarea class="text-input" id="text-input-{current_id}" placeholder="메시지를 입력하세요..." rows="1" onkeypress="handleKeyPress(event)" oninput="autoResize(this)"></textarea>
+    <button class="send-btn" id="send-btn-{current_id}" onclick="sendMessage()">↑</button>
+</div>
+
+<div class="image-preview-container" id="image-preview-{current_id}">
+    <img id="preview-img-{current_id}" src="">
+    <button class="remove-image" onclick="removeImage()">✕ 제거</button>
+</div>
+
+<script>
+let selectedFileData = null;
+
+function handleFileSelect(event) {{
+    const file = event.target.files[0];
+    if (file) {{
+        const reader = new FileReader();
+        reader.onload = function(e) {{
+            selectedFileData = {{
+                base64: e.target.result.split(',')[1],
+                mime_type: file.type,
+                name: file.name
+            }};
+            document.getElementById('preview-img-{current_id}').src = e.target.result;
+            document.getElementById('image-preview-{current_id}').style.display = 'block';
+        }};
+        reader.readAsDataURL(file);
+    }}
+}}
+
+function removeImage() {{
+    selectedFileData = null;
+    document.getElementById('file-input-{current_id}').value = '';
+    document.getElementById('image-preview-{current_id}').style.display = 'none';
+}}
+
+function autoResize(textarea) {{
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+}}
+
+function handleKeyPress(event) {{
+    if (event.key === 'Enter' && !event.shiftKey) {{
+        event.preventDefault();
+        sendMessage();
+    }}
+}}
+
+function sendMessage() {{
+    const text = document.getElementById('text-input-{current_id}').value.trim();
+    if (!text && !selectedFileData) return;
     
-    new_message = {"role": "user", "content": prompt if prompt else "이 이미지에 대해 분석해 주세요."}
+    const data = {{
+        text: text || '이 이미지에 대해 분석해 주세요.',
+        image: selectedFileData
+    }};
     
-    if uploaded_image is not None:
-        image_bytes = uploaded_image.read()
-        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-        new_message["image"] = {
-            "base64": image_base64,
-            "mime_type": uploaded_image.type
-        }
+    // Streamlit으로 데이터 전송
+    const streamlit = window.parent.document.querySelector('iframe')?.contentWindow?.streamlit;
+    if (streamlit) {{
+        streamlit.setComponentValue(data);
+    }} else {{
+        // fallback
+        window.parent.postMessage({{
+            type: 'streamlit:setComponentValue',
+            data: data
+        }}, '*');
+    }}
     
-    current_chat["messages"].append(new_message)
-    if is_logged_in:
-        save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
+    // 초기화
+    document.getElementById('text-input-{current_id}').value = '';
+    document.getElementById('text-input-{current_id}').style.height = 'auto';
+    removeImage();
+}}
+</script>
+"""
 
-    # 사용자 메시지 화면에 즉시 표시
-    with st.chat_message("user", avatar="👤"):
-        if "image" in new_message:
-            st.image(f"data:{new_message['image']['mime_type']};base64,{new_message['image']['base64']}", width=300)
-        st.markdown(new_message["content"])
-    
-    # AI 응답 처리
-    with st.chat_message("assistant", avatar=AI_AVATAR_URL):
-        try:
-            api_key = os.getenv("NVIDIA_API_KEY")
-            if not api_key:
-                st.error("⚠️ NVIDIA_API_KEY가 설정되지 않았습니다.")
-            else:
-                client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key, timeout=120.0)
-                
-                data_context = load_relevant_data(prompt if prompt else "이미지 분석")
-                ref_context = ""
-                if is_logged_in and st.session_state[ref_selection_key]:
-                    ref_context = collect_reference_chats(st.session_state[chats_key], st.session_state[ref_selection_key], current_id)
-                
-                system_prompt = BASE_SYSTEM_PROMPT
-                if data_context:
-                    system_prompt += f"\n\n[참고 자료]\n{data_context}"
-                if ref_context:
-                    system_prompt += f"\n\n[과거 대화 참고 자료]\n{ref_context}"
-                
-                max_history_messages = 10
-                recent_messages = current_chat["messages"][-max_history_messages:]
-                
-                messages_to_send = [{"role": "system", "content": system_prompt}]
-                for msg in recent_messages:
-                    if msg["role"] == "user" and "image" in msg:
-                        messages_to_send.append({
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": msg["content"]},
-                                {"type": "image_url", "image_url": {"url": f"data:{msg['image']['mime_type']};base64,{msg['image']['base64']}"}}
-                            ]
-                        })
+# 커스텀 입력창 렌더링
+input_data = components.html(custom_input_html, height=120)
+
+# 입력 데이터 처리
+if input_data:
+    try:
+        if isinstance(input_data, dict):
+            prompt = input_data.get("text", "")
+            image_data = input_data.get("image")
+        else:
+            prompt = ""
+            image_data = None
+        
+        if prompt or image_data:
+            if len(current_chat["messages"]) == 0:
+                current_chat["title"] = (prompt[:15] + "...") if prompt else "이미지 분석"
+            
+            new_message = {"role": "user", "content": prompt}
+            
+            if image_data:
+                new_message["image"] = {
+                    "base64": image_data["base64"],
+                    "mime_type": image_data["mime_type"]
+                }
+            
+            current_chat["messages"].append(new_message)
+            if is_logged_in:
+                save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
+
+            with st.chat_message("user", avatar=""):
+                if "image" in new_message:
+                    st.image(f"data:{new_message['image']['mime_type']};base64,{new_message['image']['base64']}", width=300)
+                st.markdown(new_message["content"])
+            
+            with st.chat_message("assistant", avatar=AI_AVATAR_URL):
+                try:
+                    api_key = os.getenv("NVIDIA_API_KEY")
+                    if not api_key:
+                        st.error("⚠️ NVIDIA_API_KEY가 설정되지 않았습니다.")
                     else:
-                        messages_to_send.append({"role": msg["role"], "content": msg["content"]})
-                
-                stream = client.chat.completions.create(
-                    model="google/gemma-4-31b-it",
-                    messages=messages_to_send,
-                    stream=True
-                )
-                response_content = st.write_stream(stream)
-                current_chat["messages"].append({"role": "assistant", "content": response_content})
-                
-                if is_logged_in:
-                    save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
-                    
-        except APITimeoutError:
-            st.error("⏱️ **요청 시간 초과**: AI 서버 응답이 느리거나 전송된 데이터 양이 너무 많습니다.")
-        except Exception as e:
-            st.error(f"오류가 발생했습니다: {e}")
+                        client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key, timeout=120.0)
+                        
+                        data_context = load_relevant_data(prompt)
+                        ref_context = ""
+                        if is_logged_in and st.session_state[ref_selection_key]:
+                            ref_context = collect_reference_chats(st.session_state[chats_key], st.session_state[ref_selection_key], current_id)
+                        
+                        system_prompt = BASE_SYSTEM_PROMPT
+                        if data_context:
+                            system_prompt += f"\n\n[참고 자료]\n{data_context}"
+                        if ref_context:
+                            system_prompt += f"\n\n[과거 대화 참고 자료]\n{ref_context}"
+                        
+                        max_history_messages = 10
+                        recent_messages = current_chat["messages"][-max_history_messages:]
+                        
+                        messages_to_send = [{"role": "system", "content": system_prompt}]
+                        for msg in recent_messages:
+                            if msg["role"] == "user" and "image" in msg:
+                                messages_to_send.append({
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": msg["content"]},
+                                        {"type": "image_url", "image_url": {"url": f"data:{msg['image']['mime_type']};base64,{msg['image']['base64']}"}}
+                                    ]
+                                })
+                            else:
+                                messages_to_send.append({"role": msg["role"], "content": msg["content"]})
+                        
+                        stream = client.chat.completions.create(
+                            model="google/gemma-4-31b-it",
+                            messages=messages_to_send,
+                            stream=True
+                        )
+                        response_content = st.write_stream(stream)
+                        current_chat["messages"].append({"role": "assistant", "content": response_content})
+                        
+                        if is_logged_in:
+                            save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
+                            
+                except APITimeoutError:
+                    st.error("⏱️ **요청 시간 초과**: AI 서버 응답이 느리거나 전송된 데이터 양이 너무 많습니다.")
+                except Exception as e:
+                    st.error(f"오류가 발생했습니다: {e}")
+            
+            st.rerun()
+    except Exception as e:
+        pass
