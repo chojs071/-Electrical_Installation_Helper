@@ -1,11 +1,16 @@
 import os
 import json
 import uuid
+import warnings
+import base64  # ✅ [추가] 이미지 인코딩을 위한 base64 모듈
 import streamlit as st
-from openai import OpenAI
+from openai import OpenAI, APITimeoutError
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from supabase_auth.errors import AuthApiError  # ✅ 1. gotrue -> supabase_auth 로 변경
+from supabase_auth.errors import AuthApiError
+
+# ⚠️ gotrue 및 기타 DeprecationWarning 경고 무시 설정
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ==========================================
 # 🔐 1. Supabase 클라이언트 초기화
@@ -38,7 +43,7 @@ AI_AVATAR_URL = "https://cdn.phototourl.com/free/2026-07-23-15287eb1-a0dc-42f5-8
 SIDEBAR_HEADER_IMAGE = "https://cdn.phototourl.com/free/2026-07-23-b00d3b3d-b411-4d1e-a452-24355967b5ce.png"
 
 BASE_SYSTEM_PROMPT = """너는 전기설비 분야의 친절하고 전문적인 AI 도우미야.
-반드시 아래에 제공된 [참고 자료]를 바탕으로 정확하게 답변해줘. 그리고 참고한 파일명을 알려줘.
+반드시 아래에 제공된 [참고 자료]를 바탕으로 정확하게 답변해줘. 참고한 규정의 항과 파일이름은 말하지 않아도 돼.
 [참고 자료]에 답이 없거나 관련 내용이 부족하다면, 보유한 지식을 바탕으로 설명하되 자료에 없다는 점을 안내해줘.
 나는 전기기능사, 전기(공사)산업기사, 전기(공사)기사를 응시하려는 학생이야.
 문제를 만들어 달라는 질문에는 
@@ -50,26 +55,44 @@ BASE_SYSTEM_PROMPT = """너는 전기설비 분야의 친절하고 전문적인 
 이 형식으로 4지선다로 만들어줘.
 
 만약 [과거 대화 참고 자료]가 제공된다면, 사용자의 이전 질문 맥락과 내가 previously 답변한 내용을 고려하여 일관성 있고 연속성 있는 답변을 해줘.
+사용자가 이미지를 제공하면, 이미지의 내용(회로도, 배선도, 장비 사진 등)을 전기 설비 관점에서 분석하여 설명해줘.
 """
 
 # ==========================================
 # 📂 3. 데이터 폴더 읽기 함수
 # ==========================================
-def load_data_folder(data_dir="data"):
+def load_relevant_data(prompt: str, data_dir="data", max_files: int = 2, max_chars_per_file: int = 2000):
+    """사용자 질문과 관련된 파일만 선별하여 최대 용량만큼만 반환 (토큰 초과 및 타임아웃 방지)"""
     if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
         return ""
 
-    context_texts = []
+    prompt_keywords = set(prompt.lower().replace("알려줘", "").replace("해주세요", "").replace("설명해줘", "").split())
+    scored_files = []
+    
     for filename in os.listdir(data_dir):
         file_path = os.path.join(data_dir, filename)
         if os.path.isfile(file_path) and filename.endswith(('.txt', '.md', '.json', '.csv')):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                    context_texts.append(f"--- [파일명: {filename}] ---\n{content}\n")
+                
+                content_lower = content.lower()
+                score = sum(1 for keyword in prompt_keywords if len(keyword) > 1 and keyword in content_lower)
+                
+                scored_files.append((filename, content, score))
             except Exception as e:
                 print(f"파일 읽기 오류 ({filename}): {e}")
+
+    scored_files.sort(key=lambda x: x[2], reverse=True)
+    
+    context_texts = []
+    for filename, content, score in scored_files[:max_files]:
+        truncated_content = content[:max_chars_per_file] + "\n...(이하 내용 생략)..." if len(content) > max_chars_per_file else content
+        context_texts.append(f"--- [참고 파일명: {filename}] ---\n{truncated_content}\n")
+    
+    if not context_texts and scored_files:
+        filename, content, _ = scored_files[0]
+        context_texts.append(f"--- [참고 파일명: {filename} (전체 파일 중 일부)] ---\n{content[:2000]}...\n")
 
     return "\n".join(context_texts)
 
@@ -113,17 +136,17 @@ def save_chat_to_db(user_id: str, chat_id: str, title: str, messages: list):
         st.error(f"대화 저장 실패: {e}")
 
 # ==========================================
-# ✅ 6. [추가] 과거 대화 참고 자료 수집 함수
+# ✅ 6. 과거 대화 참고 자료 수집 함수
 # ==========================================
-def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_id: str, max_messages_per_chat: int = 10) -> str:
-    """선택된 과거 대화들의 내용을 참고 자료 문자열로 구성"""
+def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_id: str, max_messages_per_chat: int = 5) -> str:
+    """선택된 과거 대화들의 내용을 참고 자료 문자열로 구성 (토큰 절약을 위해 개수 축소)"""
     if not selected_ids:
         return ""
     
     ref_parts = []
     for chat_id in selected_ids:
         if chat_id == current_chat_id:
-            continue  # 현재 대화는 제외
+            continue
         if chat_id not in chats_dict:
             continue
         
@@ -131,7 +154,6 @@ def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_i
         title = chat.get("title", "제목 없음")
         messages = chat.get("messages", [])
         
-        # 최근 N개 메시지만 참고 (토큰 절약)
         recent_messages = messages[-max_messages_per_chat:]
         
         if not recent_messages:
@@ -212,7 +234,6 @@ if chats_key not in st.session_state:
 if current_chat_key not in st.session_state:
     st.session_state[current_chat_key] = list(st.session_state[chats_key].keys())[0]
 
-# ✅ 과거 대화 참고 선택 상태 초기화
 ref_selection_key = f"ref_selection_{display_user_id}"
 if ref_selection_key not in st.session_state:
     st.session_state[ref_selection_key] = []
@@ -224,7 +245,7 @@ current_chat = st.session_state[chats_key][current_id]
 # 👤 11. 사이드바 - 계정 메뉴 & 대화 목록 & 과거 대화 참고
 # ==========================================
 with st.sidebar:
-    st.image(SIDEBAR_HEADER_IMAGE, width="stretch")  # ✅ 2. use_container_width -> width="stretch"
+    st.image(SIDEBAR_HEADER_IMAGE, width="stretch")
     
     if not is_logged_in:
         st.markdown("### 👤 계정 메뉴")
@@ -241,7 +262,7 @@ with st.sidebar:
             with st.form("login_form", clear_on_submit=True):
                 user_id = st.text_input("아이디", placeholder="아이디를 입력하세요")
                 password = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요")
-                submit_button = st.form_submit_button("로그인", width="stretch", type="primary")  # ✅ 수정
+                submit_button = st.form_submit_button("로그인", width="stretch", type="primary")
                 
                 if submit_button:
                     if not user_id or not password:
@@ -278,7 +299,7 @@ with st.sidebar:
                 new_user_id = st.text_input("새 아이디", placeholder="3자 이상 영문/숫자")
                 new_password = st.text_input("새 비밀번호", type="password", placeholder="6자 이상")
                 confirm_password = st.text_input("비밀번호 확인", type="password", placeholder="다시 입력")
-                signup_button = st.form_submit_button("회원가입", width="stretch", type="primary")  # ✅ 수정
+                signup_button = st.form_submit_button("회원가입", width="stretch", type="primary")
                 
                 if signup_button:
                     if not new_user_id or not new_password or not confirm_password:
@@ -333,7 +354,7 @@ with st.sidebar:
         st.markdown("### 👤 계정 메뉴")
         st.markdown(f"### 👋 안녕하세요, **{display_user_id}**님!")
         
-        if st.button("🚪 로그아웃", width="stretch", type="secondary"):  # ✅ 수정
+        if st.button("🚪 로그아웃", width="stretch", type="secondary"):
             supabase.auth.sign_out()
             st.session_state.user = None
             st.session_state.supabase_session = None
@@ -342,12 +363,9 @@ with st.sidebar:
         
         st.markdown("---")
     
-    # ==========================================
-    # 💬 대화 목록
-    # ==========================================
-    st.title("💬 대화 목록")
+    st.markdown("### 💬 대화 목록")
     
-    if st.button("➕ 새 대화 시작", width="stretch", type="primary"):  # ✅ 수정
+    if st.button("➕ 새 대화 시작", width="stretch", type="primary"):
         new_id = str(uuid.uuid4())
         new_title = f"새로운 대화 {len(st.session_state[chats_key]) + 1}"
         st.session_state[chats_key][new_id] = {"title": new_title, "messages": []}
@@ -373,35 +391,27 @@ with st.sidebar:
         st.session_state[current_chat_key] = selected_id
         st.rerun()
     
-    # ==========================================
-    # ✅ [추가] 과거 대화 참고 섹션 (로그인 사용자만)
-    # ==========================================
     if is_logged_in:
         st.markdown("---")
         st.markdown("### 📚 과거 대화 참고")
         st.markdown("""
             <div class="ref-notice">
                 💡 체크한 과거 대화 내용을 AI가 참고하여 답변합니다.<br>
-                (최대 3개 선택 가능, 각 대화의 최근 10개 메시지만 참고)
+                (최대 3개 선택 가능, 각 대화의 최근 5개 메시지만 참고)
             </div>
         """, unsafe_allow_html=True)
         
-        # 현재 대화 제외하고 다른 대화들만 표시
         other_chats = {cid: info for cid, info in st.session_state[chats_key].items() if cid != current_id}
         
         if not other_chats:
-            st.info("참고할 다른 대화가 없습니다. 여러 대화를 나누면 여기서 선택할 수 있어요!")
+            st.info("참고할 다른 대화가 없습니다.")
         else:
-            # 최대 3개 제한을 위한 로직
             current_selection = st.session_state[ref_selection_key]
-            
-            # 현재 선택된 대화들이 여전히 존재하는지 확인 (삭제된 경우 제거)
             current_selection = [cid for cid in current_selection if cid in other_chats]
             
             new_selection = []
             for cid, info in other_chats.items():
                 is_checked = cid in current_selection
-                # 3개 초과 시 선택된 것만 유지
                 disabled = (not is_checked) and (len(current_selection) >= 3)
                 
                 checked = st.checkbox(
@@ -414,7 +424,6 @@ with st.sidebar:
                 if checked:
                     new_selection.append(cid)
             
-            # 선택 상태 업데이트
             if new_selection != current_selection:
                 st.session_state[ref_selection_key] = new_selection
                 st.rerun()
@@ -425,7 +434,7 @@ with st.sidebar:
                 st.caption("참고할 대화를 선택하지 않았습니다.")
     
     st.markdown("---")
-    st.subheader("📁 수동으로 대화 백업 & 불러오기")
+    st.markdown("### 📁 수동으로 대화 백업 & 불러오기")
     
     current_messages = current_chat["messages"]
     json_data = json.dumps(current_messages, ensure_ascii=False, indent=2)
@@ -435,7 +444,7 @@ with st.sidebar:
         data=json_data,
         file_name=f"{current_chat['title']}_{display_user_id}.json",
         mime="application/json",
-        width="stretch",  # ✅ 수정
+        width="stretch",
         disabled=len(current_messages) == 0
     )
     
@@ -459,7 +468,7 @@ with st.sidebar:
                 st.error(f"파일 읽기 오류: {e}")
 
 # ==========================================
-# 💬 12. 메인 영역 - 채팅 UI
+# 💬 12. 메인 영역 - 채팅 UI (✅ 이미지 입력 지원 추가)
 # ==========================================
 if not is_logged_in:
     st.markdown("""
@@ -469,7 +478,6 @@ if not is_logged_in:
         </div>
     """, unsafe_allow_html=True)
 
-# ✅ 참고 중인 과거 대화 표시 (메인 영역 상단)
 if is_logged_in and st.session_state[ref_selection_key]:
     ref_titles = [st.session_state[chats_key][cid]["title"] 
                   for cid in st.session_state[ref_selection_key] 
@@ -487,25 +495,49 @@ if len(current_chat["messages"]) == 0:
     st.markdown("""
         <div class="info-box">
             👋 <b>반갑습니다!</b> 무엇이든 물어보세요.<br>
-            예시: <i>"접지공사 종류에 대해 알려줘"</i>
+            예시: <i>"접지공사 종류에 대해 알려줘"</i> 또는 <i>회로도 이미지를 업로드하고 설명 요청</i>
         </div>
     """, unsafe_allow_html=True)
 
+# ✅ [수정] 채팅 메시지 표시 시 이미지 렌더링 추가
 for message in current_chat["messages"]:
     avatar = "👤" if message["role"] == "user" else AI_AVATAR_URL
     with st.chat_message(message["role"], avatar=avatar):
+        # 사용자가 보낸 메시지이고 이미지 데이터가 있는 경우 이미지 표시
+        if message["role"] == "user" and "image_data" in message:
+            mime_type = message.get("mime_type", "image/jpeg")
+            st.image(f"data:{mime_type};base64,{message['image_data']}", width=300)
         st.markdown(message["content"])
 
-if prompt := st.chat_input("무엇을 도와드릴까요?"):
+# ✅ [수정] 이미지 업로더 추가
+uploaded_image = st.file_uploader("📎 이미지 첨부 (선택사항: 회로도, 배선도, 문제 사진 등)", type=["png", "jpg", "jpeg"], key="chat_image_uploader")
+
+if prompt := st.chat_input("무엇을 도와드릴까요? (이미지가 있다면 함께 질문을 입력하세요)"):
     if len(current_chat["messages"]) == 0:
         current_chat["title"] = prompt[:15] + "..." if len(prompt) > 15 else prompt
     
-    current_chat["messages"].append({"role": "user", "content": prompt})
+    # ✅ [수정] 이미지 데이터 처리
+    image_data = None
+    mime_type = "image/jpeg"
+    if uploaded_image is not None:
+        image_bytes = uploaded_image.read()
+        image_data = base64.b64encode(image_bytes).decode("utf-8")
+        mime_type = uploaded_image.type
+    
+    # ✅ [수정] 메시지 저장 형식에 이미지 정보 포함
+    user_message = {"role": "user", "content": prompt}
+    if image_data:
+        user_message["image_data"] = image_data
+        user_message["mime_type"] = mime_type
+    
+    current_chat["messages"].append(user_message)
     
     if is_logged_in:
         save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
 
     with st.chat_message("user", avatar="👤"):
+        if image_data:
+            st.image(f"data:{mime_type};base64,{image_data}", width=300)
         st.markdown(prompt)
     
     with st.chat_message("assistant", avatar=AI_AVATAR_URL):
@@ -514,11 +546,14 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
             if not api_key:
                 st.error("⚠️ NVIDIA_API_KEY가 설정되지 않았습니다.")
             else:
-                client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key)
+                client = OpenAI(
+                    base_url="https://integrate.api.nvidia.com/v1", 
+                    api_key=api_key,
+                    timeout=120.0
+                )
                 
-                data_context = load_data_folder()
+                data_context = load_relevant_data(prompt)
                 
-                # ✅ 과거 대화 참고 자료 수집
                 ref_context = ""
                 if is_logged_in and st.session_state[ref_selection_key]:
                     ref_context = collect_reference_chats(
@@ -527,17 +562,32 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
                         current_id
                     )
                 
-                # ✅ 시스템 프롬프트 구성 (파일 자료 + 과거 대화 참고 자료)
                 system_prompt = BASE_SYSTEM_PROMPT
                 if data_context:
                     system_prompt += f"\n\n[참고 자료]\n{data_context}"
                 if ref_context:
                     system_prompt += f"\n\n[과거 대화 참고 자료]\n{ref_context}"
                 
-                messages_to_send = [{"role": "system", "content": system_prompt}] + current_chat["messages"]
+                max_history_messages = 10
+                recent_messages = current_chat["messages"][-max_history_messages:]
                 
+                # ✅ [수정] API 요청 메시지 포맷팅 (Vision 모델 호환 형식)
+                messages_to_send = [{"role": "system", "content": system_prompt}]
+                for msg in recent_messages:
+                    if msg["role"] == "user" and "image_data" in msg:
+                        messages_to_send.append({
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": msg["content"]},
+                                {"type": "image_url", "image_url": {"url": f"data:{msg.get('mime_type', 'image/jpeg')};base64,{msg['image_data']}"}}
+                            ]
+                        })
+                    else:
+                        messages_to_send.append({"role": msg["role"], "content": msg["content"]})
+                
+                # ⚠️ 참고: 이미지 분석을 위해서는 Vision을 지원하는 모델(예: meta/llama-3.2-90b-vision-instruct)을 사용해야 합니다.
                 stream = client.chat.completions.create(
-                    model="minimaxai/minimax-m3",
+                    model="meta/llama-3.2-90b-vision-instruct",  # ✅ Vision 지원 모델로 변경 (기존 모델이 Vision을 지원하지 않을 경우)
                     messages=messages_to_send,
                     stream=True
                 )
@@ -547,5 +597,7 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
                 if is_logged_in:
                     save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
                     
+        except APITimeoutError:
+            st.error("⏱️ **요청 시간 초과**: AI 서버 응답이 느리거나 전송된 데이터 양이 너무 많습니다. 질문을 더 간결하게 하거나, '과거 대화 참고' 선택을 줄여주세요.")
         except Exception as e:
             st.error(f"오류가 발생했습니다: {e}")
