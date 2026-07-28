@@ -2,7 +2,7 @@ import os
 import json
 import uuid
 import warnings
-import base64  # ✅ [추가] 이미지 인코딩을 위한 base64 모듈
+import base64  # ✅ 이미지 인코딩을 위해 추가
 import streamlit as st
 from openai import OpenAI, APITimeoutError
 from dotenv import load_dotenv
@@ -55,11 +55,11 @@ BASE_SYSTEM_PROMPT = """너는 전기설비 분야의 친절하고 전문적인 
 이 형식으로 4지선다로 만들어줘.
 
 만약 [과거 대화 참고 자료]가 제공된다면, 사용자의 이전 질문 맥락과 내가 previously 답변한 내용을 고려하여 일관성 있고 연속성 있는 답변을 해줘.
-사용자가 이미지를 제공하면, 이미지의 내용(회로도, 배선도, 장비 사진 등)을 전기 설비 관점에서 분석하여 설명해줘.
+사용자가 이미지를 업로드하면, 이미지에 포함된 내용(배선도, 기기 사진, 문제 등)을 분석하여 전기설비 관점에서 친절하게 설명해줘.
 """
 
 # ==========================================
-# 📂 3. 데이터 폴더 읽기 함수
+# 📂 3. 데이터 폴더 읽기 함수 (✅ 수정: 토큰 절약형 스마트 로드)
 # ==========================================
 def load_relevant_data(prompt: str, data_dir="data", max_files: int = 2, max_chars_per_file: int = 2000):
     """사용자 질문과 관련된 파일만 선별하여 최대 용량만큼만 반환 (토큰 초과 및 타임아웃 방지)"""
@@ -468,7 +468,7 @@ with st.sidebar:
                 st.error(f"파일 읽기 오류: {e}")
 
 # ==========================================
-# 💬 12. 메인 영역 - 채팅 UI (✅ 이미지 입력 지원 추가)
+# 💬 12. 메인 영역 - 채팅 UI
 # ==========================================
 if not is_logged_in:
     st.markdown("""
@@ -495,51 +495,48 @@ if len(current_chat["messages"]) == 0:
     st.markdown("""
         <div class="info-box">
             👋 <b>반갑습니다!</b> 무엇이든 물어보세요.<br>
-            예시: <i>"접지공사 종류에 대해 알려줘"</i> 또는 <i>회로도 이미지를 업로드하고 설명 요청</i>
+            예시: <i>"접지공사 종류에 대해 알려줘"</i> 또는 <i>전기 배선도 사진을 업로드하고 설명 요청</i>
         </div>
     """, unsafe_allow_html=True)
 
-# ✅ [수정] 채팅 메시지 표시 시 이미지 렌더링 추가
+# ✅ 기존 메시지 렌더링 (이미지 포함 지원)
 for message in current_chat["messages"]:
     avatar = "👤" if message["role"] == "user" else AI_AVATAR_URL
     with st.chat_message(message["role"], avatar=avatar):
-        # 사용자가 보낸 메시지이고 이미지 데이터가 있는 경우 이미지 표시
-        if message["role"] == "user" and "image_data" in message:
-            mime_type = message.get("mime_type", "image/jpeg")
-            st.image(f"data:{mime_type};base64,{message['image_data']}", width=300)
+        # 이미지가 있는 경우 먼저 표시
+        if "image" in message:
+            st.image(f"data:{message['image']['mime_type']};base64,{message['image']['base64']}", width=300)
         st.markdown(message["content"])
 
-# ✅ [수정] 이미지 업로더 추가
-uploaded_image = st.file_uploader("📎 이미지 첨부 (선택사항: 회로도, 배선도, 문제 사진 등)", type=["png", "jpg", "jpeg"], key="chat_image_uploader")
+# ✅ 이미지 업로더 추가
+uploaded_image = st.file_uploader("📎 이미지 첨부 (선택사항)", type=["png", "jpg", "jpeg"], key="chat_image_uploader")
 
-if prompt := st.chat_input("무엇을 도와드릴까요? (이미지가 있다면 함께 질문을 입력하세요)"):
+if prompt := st.chat_input("무엇을 도와드릴까요?"):
     if len(current_chat["messages"]) == 0:
         current_chat["title"] = prompt[:15] + "..." if len(prompt) > 15 else prompt
     
-    # ✅ [수정] 이미지 데이터 처리
-    image_data = None
-    mime_type = "image/jpeg"
+    # ✅ 메시지 생성 시 이미지 정보 포함
+    new_message = {"role": "user", "content": prompt}
     if uploaded_image is not None:
         image_bytes = uploaded_image.read()
-        image_data = base64.b64encode(image_bytes).decode("utf-8")
-        mime_type = uploaded_image.type
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        new_message["image"] = {
+            "base64": image_base64,
+            "mime_type": uploaded_image.type
+        }
     
-    # ✅ [수정] 메시지 저장 형식에 이미지 정보 포함
-    user_message = {"role": "user", "content": prompt}
-    if image_data:
-        user_message["image_data"] = image_data
-        user_message["mime_type"] = mime_type
-    
-    current_chat["messages"].append(user_message)
+    current_chat["messages"].append(new_message)
     
     if is_logged_in:
         save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
 
+    # 사용자 메시지 화면에 즉시 표시
     with st.chat_message("user", avatar="👤"):
-        if image_data:
-            st.image(f"data:{mime_type};base64,{image_data}", width=300)
+        if "image" in new_message:
+            st.image(f"data:{new_message['image']['mime_type']};base64,{new_message['image']['base64']}", width=300)
         st.markdown(prompt)
     
+    # AI 응답 처리
     with st.chat_message("assistant", avatar=AI_AVATAR_URL):
         try:
             api_key = os.getenv("NVIDIA_API_KEY")
@@ -571,23 +568,23 @@ if prompt := st.chat_input("무엇을 도와드릴까요? (이미지가 있다�
                 max_history_messages = 10
                 recent_messages = current_chat["messages"][-max_history_messages:]
                 
-                # ✅ [수정] API 요청 메시지 포맷팅 (Vision 모델 호환 형식)
+                # ✅ Vision API 호환 메시지 포맷팅
                 messages_to_send = [{"role": "system", "content": system_prompt}]
                 for msg in recent_messages:
-                    if msg["role"] == "user" and "image_data" in msg:
+                    if msg["role"] == "user" and "image" in msg:
                         messages_to_send.append({
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": msg["content"]},
-                                {"type": "image_url", "image_url": {"url": f"data:{msg.get('mime_type', 'image/jpeg')};base64,{msg['image_data']}"}}
+                                {"type": "image_url", "image_url": {"url": f"data:{msg['image']['mime_type']};base64,{msg['image']['base64']}"}}
                             ]
                         })
                     else:
                         messages_to_send.append({"role": msg["role"], "content": msg["content"]})
                 
-                # ⚠️ 참고: 이미지 분석을 위해서는 Vision을 지원하는 모델(예: meta/llama-3.2-90b-vision-instruct)을 사용해야 합니다.
+                # ✅ Vision을 지원하는 모델로 변경 (Gemma는 Vision 미지원)
                 stream = client.chat.completions.create(
-                    model="meta/llama-3.2-90b-vision-instruct",  # ✅ Vision 지원 모델로 변경 (기존 모델이 Vision을 지원하지 않을 경우)
+                    model="google/gemma-4-31b-it",  # ✅ NVIDIA API의 Vision 지원 모델
                     messages=messages_to_send,
                     stream=True
                 )
