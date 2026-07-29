@@ -2,6 +2,7 @@ import os
 import json
 import uuid
 import warnings
+import base64
 import streamlit as st
 from openai import OpenAI, APITimeoutError
 from dotenv import load_dotenv
@@ -42,7 +43,8 @@ AI_AVATAR_URL = "https://cdn.phototourl.com/free/2026-07-23-15287eb1-a0dc-42f5-8
 SIDEBAR_HEADER_IMAGE = "https://cdn.phototourl.com/free/2026-07-23-b00d3b3d-b411-4d1e-a452-24355967b5ce.png"
 
 BASE_SYSTEM_PROMPT = """너는 전기설비 분야의 친절하고 전문적인 AI 도우미야.
-반드시 아래에 제공된 [참고 자료]를 바탕으로 정확하게 답변해줘. 참고한 규정의 항과 파일이름은 말하지 않아도 돼.
+반드시 아래에 제공된 [참고 자료]를 바탕으로 정확하게 답변해줘.
+참고한 규정의 항과 파일이름은 말하지 않아도 돼.
 [참고 자료]에 답이 없거나 관련 내용이 부족하다면, 보유한 지식을 바탕으로 설명하되 자료에 없다는 점을 안내해줘.
 나는 전기기능사, 전기(공사)산업기사, 전기(공사)기사를 응시하려는 학생이야.
 문제를 만들어 달라는 질문에는 
@@ -53,18 +55,18 @@ BASE_SYSTEM_PROMPT = """너는 전기설비 분야의 친절하고 전문적인 
 4.
 이 형식으로 4지선다로 만들어줘.
 
+만약 사용자가 이미지를 제공했다면, 이미지의 내용(배선도, 기기 사진, 문제 등)을 먼저 정확하게 분석하고 [참고 자료]와 대조하여 전문적으로 답변해줘.
 만약 [과거 대화 참고 자료]가 제공된다면, 사용자의 이전 질문 맥락과 내가 previously 답변한 내용을 고려하여 일관성 있고 연속성 있는 답변을 해줘.
 """
 
 # ==========================================
-# 📂 3. 데이터 폴더 읽기 함수 (✅ 수정: 토큰 절약형 스마트 로드)
+# 📂 3. 데이터 폴더 읽기 함수
 # ==========================================
 def load_relevant_data(prompt: str, data_dir="data", max_files: int = 2, max_chars_per_file: int = 2000):
     """사용자 질문과 관련된 파일만 선별하여 최대 용량만큼만 반환 (토큰 초과 및 타임아웃 방지)"""
     if not os.path.exists(data_dir):
         return ""
 
-    # 질문에서 간단한 키워드 추출
     prompt_keywords = set(prompt.lower().replace("알려줘", "").replace("해주세요", "").replace("설명해줘", "").split())
     scored_files = []
     
@@ -433,7 +435,7 @@ with st.sidebar:
                 st.caption("참고할 대화를 선택하지 않았습니다.")
 
     # ==========================================
-    # 🖼️ [새로 추가됨] 이미지 전용 입력 섹션
+    # 🖼️ 이미지 전용 입력 섹션
     # ==========================================
     st.markdown("---")
     st.markdown("### 🖼️ 이미지 입력")
@@ -444,21 +446,24 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
     
+    # 전송 후 업로더를 초기화하기 위해 동적 키 사용
+    img_counter = st.session_state.get("img_counter", 0)
     uploaded_image = st.file_uploader(
         "이미지 파일 선택",
         type=["png", "jpg", "jpeg", "webp"],
         label_visibility="collapsed",
-        key="sidebar_image_uploader"
+        key=f"sidebar_image_uploader_{img_counter}"
     )
     
     if uploaded_image is not None:
-        st.image(uploaded_image, caption="업로드된 이미지 미리보기", use_container_width=True)
-        st.success("✅ 이미지가 성공적으로 업로드되었습니다.")
-        # 💡 향후 AI 이미지 분석(Vision) 기능 연동 시, 
-        # st.session_state.current_image = uploaded_image 등으로 저장하여 프롬프트와 함께 전송 가능
+        st.session_state.current_uploaded_image = uploaded_image
+
+    if "current_uploaded_image" in st.session_state and st.session_state.current_uploaded_image is not None:
+        st.image(st.session_state.current_uploaded_image, caption="업로드된 이미지 미리보기", width="stretch")
+        st.success("✅ 이미지가 성공적으로 업로드되었습니다. (메시지 입력 시 함께 분석됩니다)")
 
     # ==========================================
-    # 📁 기존 수동 백업 & 불러오기 섹션
+    # 📁 수동으로 대화 백업 & 불러오기
     # ==========================================
     st.markdown("---")
     st.markdown("### 📁 수동으로 대화 백업 & 불러오기")
@@ -526,22 +531,64 @@ if len(current_chat["messages"]) == 0:
         </div>
     """, unsafe_allow_html=True)
 
+# ✅ 멀티모달(이미지+텍스트) 메시지 렌더링 처리
 for message in current_chat["messages"]:
     avatar = "👤" if message["role"] == "user" else AI_AVATAR_URL
     with st.chat_message(message["role"], avatar=avatar):
-        st.markdown(message["content"])
+        if isinstance(message["content"], list):
+            for item in message["content"]:
+                if item["type"] == "text":
+                    st.markdown(item["text"])
+                elif item["type"] == "image_url":
+                    st.image(item["image_url"]["url"], width="stretch")
+        else:
+            st.markdown(message["content"])
 
-if prompt := st.chat_input("무엇을 도와드릴까요?"):
+if prompt := st.chat_input("이미지와 함께 질문을 입력하세요 (예: 이 기기의 명판을 분석해줘)"):
     if len(current_chat["messages"]) == 0:
         current_chat["title"] = prompt[:15] + "..." if len(prompt) > 15 else prompt
     
-    current_chat["messages"].append({"role": "user", "content": prompt})
+    # 사용자 메시지 구성 (멀티모달 지원)
+    user_content = []
+    if prompt.strip():
+        user_content.append({"type": "text", "text": prompt})
+    
+    # 업로드된 이미지가 있으면 Base64 인코딩하여 메시지에 추가
+    if "current_uploaded_image" in st.session_state and st.session_state.current_uploaded_image is not None:
+        img_file = st.session_state.current_uploaded_image
+        img_bytes = img_file.read()
+        img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+        mime_type = img_file.type if img_file.type else "image/jpeg"
+        
+        user_content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime_type};base64,{img_base64}"}
+        })
+        
+        # 전송 후 세션 및 업로더 초기화 (중복 전송 방지)
+        del st.session_state.current_uploaded_image
+        st.session_state.img_counter = st.session_state.get("img_counter", 0) + 1
+
+    # content가 리스트인지 문자열인지에 따라 포맷팅 (DB 호환성 유지)
+    if len(user_content) == 1 and user_content[0]["type"] == "text":
+        final_user_message = {"role": "user", "content": user_content[0]["text"]}
+    else:
+        final_user_message = {"role": "user", "content": user_content}
+
+    current_chat["messages"].append(final_user_message)
     
     if is_logged_in:
         save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
 
     with st.chat_message("user", avatar="👤"):
-        st.markdown(prompt)
+        if isinstance(final_user_message["content"], list):
+            for item in final_user_message["content"]:
+                if item["type"] == "text":
+                    st.markdown(item["text"])
+                elif item["type"] == "image_url":
+                    st.image(item["image_url"]["url"], width="stretch")
+        else:
+            st.markdown(final_user_message["content"])
     
     with st.chat_message("assistant", avatar=AI_AVATAR_URL):
         try:
@@ -549,7 +596,6 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
             if not api_key:
                 st.error("⚠️ NVIDIA_API_KEY가 설정되지 않았습니다.")
             else:
-                # ✅ 타임아웃 방지를 위해 timeout 값을 120초로 명시적 설정
                 client = OpenAI(
                     base_url="https://integrate.api.nvidia.com/v1", 
                     api_key=api_key,
@@ -572,14 +618,14 @@ if prompt := st.chat_input("무엇을 도와드릴까요?"):
                 if ref_context:
                     system_prompt += f"\n\n[과거 대화 참고 자료]\n{ref_context}"
                 
-                # ✅ 현재 대화 기록도 10개로 축소하여 토큰 절약
                 max_history_messages = 10
                 recent_messages = current_chat["messages"][-max_history_messages:]
                 
                 messages_to_send = [{"role": "system", "content": system_prompt}] + recent_messages
                 
+                # ✅ 기존에 사용하시던 비전 지원 모델명 유지 (Gemma 비전 모델)
                 stream = client.chat.completions.create(
-                    model="google/gemma-4-31b-it",
+                    model="google/gemma-4-31b-it",  # 필요시 실제 NVIDIA API의 정확한 Gemma 비전 모델명으로 수정 가능 (예: google/gemma-3-27b-it)
                     messages=messages_to_send,
                     stream=True
                 )
