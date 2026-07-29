@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from supabase_auth.errors import AuthApiError
 
-# ⚠️ gotrue 및 기타 DeprecationWarning 경고 무시 설정
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ==========================================
@@ -26,7 +25,6 @@ if not SUPABASE_URL or not SUPABASE_ANON_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-# ✅ RLS 오류 해결: Streamlit 재실행 시 로그인 세션(토큰) 복원
 if "supabase_session" in st.session_state and st.session_state.supabase_session is not None:
     try:
         supabase.auth.set_session(
@@ -62,7 +60,6 @@ BASE_SYSTEM_PROMPT = """너는 전기설비 분야의 친절하고 전문적인 
 # 📂 3. 데이터 폴더 읽기 함수
 # ==========================================
 def load_relevant_data(prompt: str, data_dir="data", max_files: int = 2, max_chars_per_file: int = 2000):
-    """사용자 질문과 관련된 파일만 선별하여 최대 용량만큼만 반환 (토큰 초과 및 타임아웃 방지)"""
     if not os.path.exists(data_dir):
         return ""
 
@@ -75,7 +72,6 @@ def load_relevant_data(prompt: str, data_dir="data", max_files: int = 2, max_cha
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                
                 content_lower = content.lower()
                 score = sum(1 for keyword in prompt_keywords if len(keyword) > 1 and keyword in content_lower)
                 scored_files.append((filename, content, score))
@@ -138,7 +134,6 @@ def save_chat_to_db(user_id: str, chat_id: str, title: str, messages: list):
 # ✅ 6. 과거 대화 참고 자료 수집 함수
 # ==========================================
 def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_id: str, max_messages_per_chat: int = 5) -> str:
-    """선택된 과거 대화들의 내용을 참고 자료 문자열로 구성 (토큰 절약을 위해 개수 축소)"""
     if not selected_ids:
         return ""
     
@@ -152,7 +147,6 @@ def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_i
         chat = chats_dict[chat_id]
         title = chat.get("title", "제목 없음")
         messages = chat.get("messages", [])
-        
         recent_messages = messages[-max_messages_per_chat:]
         
         if not recent_messages:
@@ -162,20 +156,87 @@ def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_i
         for msg in recent_messages:
             role_kr = "사용자" if msg["role"] == "user" else "AI"
             chat_content += f"{role_kr}: {msg['content']}\n"
-        
         ref_parts.append(chat_content)
     
     return "\n".join(ref_parts)
 
 # ==========================================
-# 🚀 7. 페이지 기본 설정
+#  7. 페이지 기본 설정
 # ==========================================
-st.set_page_config(page_title="나만의 AI 전기설비 도우미", page_icon=AI_AVATAR_URL, layout="centered")
+st.set_page_config(page_title="나만의 AI 전기설비 도우미", page_icon=AI_AVATAR_URL, layout="wide")
 
+# ==========================================
+# 🎨 핵심 CSS: 상단(답변) / 하단(입력) 명확 분할
+# ==========================================
 st.markdown("""
-    <style>
-    .main { padding-top: 2rem; }
-    .stTitle { font-weight: 800; color: #1E293B; }
+<style>
+    /* 전체 페이지 높이 고정 */
+    html, body, [class*="css"] {
+        height: 100%;
+    }
+    
+    /* 메인 컨테이너를 Flexbox로 전환 (세로 방향) */
+    .main .block-container {
+        display: flex !important;
+        flex-direction: column !important;
+        height: 100vh !important;
+        padding: 0 !important;
+        max-width: 100% !important;
+    }
+    
+    /* ===== 상단: 답변 영역 ===== */
+    .output-area {
+        flex: 1 !important;
+        overflow-y: auto !important;
+        padding: 20px 30px !important;
+        background-color: #ffffff !important;
+        min-height: 0 !important;
+    }
+    
+    /* ===== 하단: 입력 영역 ===== */
+    .input-area {
+        flex-shrink: 0 !important;
+        background-color: #f1f5f9 !important;
+        border-top: 3px solid #3b82f6 !important;
+        padding: 15px 30px !important;
+        min-height: 80px !important;
+    }
+    
+    /* st.chat_input의 기본 하단 고정 해제 (부모 컨테이너를 따르게 함) */
+    div[data-testid="stChatInput"] {
+        position: static !important;
+    }
+    div[data-testid="stChatInput"] > div {
+        position: static !important;
+    }
+    
+    /* 파일 업로더 스타일 (텍스트 입력창과 높이 맞춤) */
+    .stFileUploader [data-testid="stFileUploaderDropzone"] {
+        min-height: 48px !important;
+        max-height: 48px !important;
+        padding: 4px 8px !important;
+        border: 1px dashed #94a3b8 !important;
+        border-radius: 6px !important;
+        background-color: #ffffff !important;
+    }
+    .stFileUploader label {
+        display: none !important;
+    }
+    
+    /* 스크롤바 스타일 */
+    .output-area::-webkit-scrollbar {
+        width: 8px;
+    }
+    .output-area::-webkit-scrollbar-track {
+        background: #f1f5f9;
+    }
+    .output-area::-webkit-scrollbar-thumb {
+        background-color: #94a3b8;
+        border-radius: 4px;
+    }
+    
+    /* 기존 스타일 유지 */
+    .stTitle { font-weight: 800; color: #1E293B; margin-bottom: 10px; }
     .info-box {
         background-color: #F1F5F9;
         border-radius: 10px;
@@ -199,16 +260,23 @@ st.markdown("""
         border-left: 4px solid #10B981;
         font-size: 0.85em;
     }
-    .stFileUploader { margin-bottom: 0px; }
-    .stFileUploader > div { padding: 0px; }
-    </style>
+    .image-preview-box {
+        background-color: #ffffff;
+        border-radius: 6px;
+        padding: 8px 12px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+        border: 1px solid #cbd5e1;
+    }
+</style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🏠 8. 메인 화면 타이틀
+#  8. 메인 화면 타이틀
 # ==========================================
 st.title("⚡ 나만의 AI 전기설비 도우미 ⚡")
-st.markdown("<p style='text-align: center; color: gray;'>전기 기능사/산업기사/기사 합격을 위한 맞춤형 AI 튜터</p>", unsafe_allow_html=True)
 
 # ==========================================
 # 🔍 9. 로그인 상태 확인 및 세션 키 결정
@@ -243,7 +311,7 @@ current_id = st.session_state[current_chat_key]
 current_chat = st.session_state[chats_key][current_id]
 
 # ==========================================
-# 👤 11. 사이드바 - 계정 메뉴 & 대화 목록 & 과거 대화 참고
+# 👤 11. 사이드바
 # ==========================================
 with st.sidebar:
     st.image(SIDEBAR_HEADER_IMAGE, width="stretch")
@@ -253,7 +321,7 @@ with st.sidebar:
         st.markdown("""
             <div class="guest-notice">
                 🎭 <b>게스트 모드</b>로 이용 중입니다.<br>
-                💡 로그인하면 대화가 <b>영구 저장</b>됩니다!
+                 로그인하면 대화가 <b>영구 저장</b>됩니다!
             </div>
         """, unsafe_allow_html=True)
         
@@ -277,11 +345,9 @@ with st.sidebar:
                                     st.session_state.user = response.user
                                     st.session_state.supabase_session = response.session
                                     st.session_state.display_user_id = user_id
-                                    
                                     db_chats = load_user_chats_from_db(response.user.id)
                                     if db_chats:
                                         st.session_state[f"chats_{response.user.id}"] = db_chats
-                                    
                                     st.success("로그인 성공!")
                                     st.rerun()
                             except AuthApiError as e:
@@ -289,7 +355,7 @@ with st.sidebar:
                                 if "rate limit" in error_msg:
                                     st.error("⚠️ 로그인 시도가 너무 많습니다. 1시간 후 다시 시도해 주세요.")
                                 elif "invalid login credentials" in error_msg:
-                                    st.error("로그인 실패: 아이디 또는 비밀번호가 올바르지 않습니다.")
+                                    st.error("로그인 실: 아이디 또는 비밀번호가 올바르지 않습니다.")
                                 else:
                                     st.error(f"로그인 오류: {e}")
                             except Exception as e:
@@ -315,57 +381,46 @@ with st.sidebar:
                         with st.spinner("회원가입 처리 중..."):
                             try:
                                 email = user_id_to_email(new_user_id)
-                                response = supabase.auth.sign_up({
-                                    "email": email,
-                                    "password": new_password
-                                })
+                                response = supabase.auth.sign_up({"email": email, "password": new_password})
                                 
                                 if response.user and response.session:
                                     st.session_state.user = response.user
                                     st.session_state.supabase_session = response.session
                                     st.session_state.display_user_id = new_user_id
-                                    st.success(f"🎉 {new_user_id}님, 환영합니다! 자동으로 로그인되었습니다.")
+                                    st.success(f"🎉 {new_user_id}님, 환영합니다!")
                                     st.rerun()
                                 elif response.user:
-                                    login_response = supabase.auth.sign_in_with_password({
-                                        "email": email,
-                                        "password": new_password
-                                    })
+                                    login_response = supabase.auth.sign_in_with_password({"email": email, "password": new_password})
                                     if login_response.user:
                                         st.session_state.user = login_response.user
                                         st.session_state.supabase_session = login_response.session
                                         st.session_state.display_user_id = new_user_id
                                         st.success(f"🎉 {new_user_id}님, 환영합니다!")
                                         st.rerun()
-                                
                             except AuthApiError as e:
                                 error_msg = str(e).lower()
                                 if "rate limit" in error_msg:
                                     st.error("⚠️ 회원가입 시도가 너무 많습니다. 1시간 후 다시 시도해 주세요.")
                                 elif "user already registered" in error_msg:
-                                    st.error("이미 등록된 아이디입니다. 로그인 탭에서 로그인해 주세요.")
+                                    st.error("이미 등록된 아이디입니다.")
                                 else:
                                     st.error(f"회원가입 실패: {e}")
                             except Exception as e:
                                 st.error(f"오류가 발생했습니다: {e}")
         
         st.markdown("---")
-        
     else:
         st.markdown("### 👤 계정 메뉴")
         st.markdown(f"### 👋 안녕하세요, **{display_user_id}**님!")
-        
         if st.button("🚪 로그아웃", width="stretch", type="secondary"):
             supabase.auth.sign_out()
             st.session_state.user = None
             st.session_state.supabase_session = None
             st.session_state.display_user_id = None
             st.rerun()
-        
         st.markdown("---")
     
     st.markdown("### 💬 대화 목록")
-    
     if st.button("➕ 새 대화 시작", width="stretch", type="primary"):
         new_id = str(uuid.uuid4())
         new_title = f"새로운 대화 {len(st.session_state[chats_key]) + 1}"
@@ -376,7 +431,6 @@ with st.sidebar:
     st.markdown("---")
     
     chat_options = {cid: info["title"] for cid, info in st.session_state[chats_key].items()}
-    
     if current_id not in chat_options:
         st.session_state[current_chat_key] = list(chat_options.keys())[0]
         st.rerun()
@@ -387,7 +441,6 @@ with st.sidebar:
         format_func=lambda x: chat_options[x],
         index=list(chat_options.keys()).index(current_id)
     )
-    
     if selected_id != current_id:
         st.session_state[current_chat_key] = selected_id
         st.rerun()
@@ -398,79 +451,36 @@ with st.sidebar:
         st.markdown("""
             <div class="ref-notice">
                 💡 체크한 과거 대화 내용을 AI가 참고하여 답변합니다.<br>
-                (최대 3개 선택 가능, 각 대화의 최근 5개 메시지만 참고)
+                (최대 3개 선택 가능)
             </div>
         """, unsafe_allow_html=True)
         
         other_chats = {cid: info for cid, info in st.session_state[chats_key].items() if cid != current_id}
-        
         if not other_chats:
             st.info("참고할 다른 대화가 없습니다.")
         else:
             current_selection = st.session_state[ref_selection_key]
             current_selection = [cid for cid in current_selection if cid in other_chats]
-            
             new_selection = []
             for cid, info in other_chats.items():
                 is_checked = cid in current_selection
                 disabled = (not is_checked) and (len(current_selection) >= 3)
-                
-                checked = st.checkbox(
-                    f"📖 {info['title']}",
-                    value=is_checked,
-                    key=f"ref_chk_{cid}",
-                    disabled=disabled,
-                    help="이 대화를 참고 자료로 포함"
-                )
+                checked = st.checkbox(f"📖 {info['title']}", value=is_checked, key=f"ref_chk_{cid}", disabled=disabled)
                 if checked:
                     new_selection.append(cid)
-            
             if new_selection != current_selection:
                 st.session_state[ref_selection_key] = new_selection
                 st.rerun()
-            
             if current_selection:
                 st.caption(f"✨ {len(current_selection)}개 대화 참고 중")
-            else:
-                st.caption("참고할 대화를 선택하지 않았습니다.")
-    
-    st.markdown("---")
-    st.markdown("### 📁 수동으로 대화 백업 & 불러오기")
-    
-    current_messages = current_chat["messages"]
-    json_data = json.dumps(current_messages, ensure_ascii=False, indent=2)
-    
-    st.download_button(
-        label="📥 현재 대화 JSON 저장",
-        data=json_data,
-        file_name=f"{current_chat['title']}_{display_user_id}.json",
-        mime="application/json",
-        width="stretch",
-        disabled=len(current_messages) == 0
-    )
-    
-    uploaded_file = st.file_uploader("📤 JSON 대화 불러오기", type=["json"])
-    if uploaded_file is not None:
-        file_id = f"{uploaded_file.name}_{uploaded_file.size}"
-        if st.session_state.get("last_uploaded_file") != file_id:
-            try:
-                loaded_messages = json.load(uploaded_file)
-                if isinstance(loaded_messages, list):
-                    imported_id = str(uuid.uuid4())
-                    st.session_state[chats_key][imported_id] = {
-                        "title": f"📂 {os.path.splitext(uploaded_file.name)[0]}",
-                        "messages": loaded_messages
-                    }
-                    st.session_state[current_chat_key] = imported_id
-                    st.session_state.last_uploaded_file = file_id
-                    st.success("대화를 성공적으로 불러왔습니다!")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"파일 읽기 오류: {e}")
 
 # ==========================================
-# 💬 12. 메인 영역 - 채팅 UI 및 하단 고정 입력창
+# 💬 12. 메인 영역 - 상단(답변) / 하단(입력) 분할
 # ==========================================
+
+# --- 상단: 답변 영역 ---
+st.markdown('<div class="output-area">', unsafe_allow_html=True)
+
 if not is_logged_in:
     st.markdown("""
         <div class="guest-notice">
@@ -490,85 +500,35 @@ if is_logged_in and st.session_state[ref_selection_key]:
             </div>
         """, unsafe_allow_html=True)
 
-st.caption(f"📌 **현재 대화:** {current_chat['title']} | 👤 {display_user_id}")
+st.caption(f"📌 **현재 대화:** {current_chat['title']} |  {display_user_id}")
 
 if len(current_chat["messages"]) == 0:
     st.markdown("""
         <div class="info-box">
-            👋 <b>반갑습니다!</b> 무엇이든 물어보세요.<br>
-            예시: <i>"접지공사 종류에 대해 알려줘"</i> 또는 <i>아래 [+] 아이콘으로 전기 배선도 사진을 업로드하세요.</i>
+             <b>반갑습니다!</b> 무엇이든 물어보세요.<br>
+            예시: <i>"접지공사 종류에 대해 알려줘"</i> 또는 <i>아래 이미지 입력창으로 전기 배선도 사진을 업로드하세요.</i>
         </div>
     """, unsafe_allow_html=True)
 
-# ✅ 기존 메시지 렌더링 (이미지 포함 지원)
+# 기존 메시지 렌더링
 for message in current_chat["messages"]:
-    avatar = "👤" if message["role"] == "user" else AI_AVATAR_URL
+    avatar = "" if message["role"] == "user" else AI_AVATAR_URL
     with st.chat_message(message["role"], avatar=avatar):
         if "image" in message:
             st.image(f"data:{message['image']['mime_type']};base64,{message['image']['base64']}", width=300)
         st.markdown(message["content"])
 
-# ==========================================
-# 📌 하단 고정 및 1:3 비율 레이아웃을 위한 핵심 CSS
-# ==========================================
-st.markdown("""
-<style>
-    /* 1. 메인 영역 하단 여백 확보 (고정된 입력창에 메시지가 가려지지 않도록) */
-    .main .block-container {
-        padding-bottom: 180px !important;
-    }
-    
-    /* 2. st.chat_input이 포함된 행(Row) 전체를 하단 고정 (핵심) */
-    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stChatInput"]) {
-        position: sticky !important;
-        bottom: 0 !important;
-        background-color: #ffffff !important;
-        z-index: 9999 !important;
-        padding: 10px 5px !important;
-        border-top: 1px solid #e2e8f0 !important;
-        box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.05) !important;
-    }
-    
-    /* 3. 파일 업로더 스타일 조정 (채팅 입력창과 높이 및 스타일 완벽 맞춤) */
-    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stChatInput"]) .stFileUploader [data-testid="stFileUploaderDropzone"] {
-        min-height: 48px !important;
-        padding: 6px !important;
-        border: 1px dashed #cbd5e1 !important;
-        border-radius: 8px !important;
-        background-color: #f8fafc !important;
-        transition: all 0.2s ease;
-    }
-    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stChatInput"]) .stFileUploader [data-testid="stFileUploaderDropzone"]:hover {
-        border-color: #3b82f6 !important;
-        background-color: #eff6ff !important;
-    }
-    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stChatInput"]) .stFileUploader label {
-        display: none !important;
-    }
-    
-    /* 4. 첨부된 이미지 미리보기 스타일 */
-    .image-preview-box {
-        background-color: #f1f5f9;
-        border-radius: 8px;
-        padding: 8px 12px;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 10px;
-        border: 1px solid #e2e8f0;
-    }
-</style>
-""", unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
-# 채팅방 변경 시 대기 중인 이미지 초기화 (다른 채팅으로 이미지 유출 방지)
+# --- 하단: 입력 영역 (고정) ---
+st.markdown('<div class="input-area">', unsafe_allow_html=True)
+
+# 채팅방 변경 시 대기 이미지 초기화
 if "pending_image" not in st.session_state or st.session_state.get("last_active_chat") != current_id:
     st.session_state.pending_image = None
     st.session_state.last_active_chat = current_id
 
-# ==========================================
-# 📌 하단 고정 영역 (미리보기 + 1:3 입력창)
-# ==========================================
-# 대기 중인 이미지가 있으면 미리보기 표시 (고정 영역 내부 상단)
+# 대기 중인 이미지 미리보기
 if st.session_state.pending_image is not None:
     st.markdown(
         f"""
@@ -582,16 +542,15 @@ if st.session_state.pending_image is not None:
         """, 
         unsafe_allow_html=True
     )
-    st.session_state.pending_image.seek(0) # 파일 포인터 리셋
+    st.session_state.pending_image.seek(0)
     
-    # 제거 버튼
     _, col_clear = st.columns([5, 1])
     with col_clear:
-        if st.button("🗑️ 첨부 취소", key="clear_pending", use_container_width=True):
+        if st.button("️ 첨부 취소", key="clear_pending", use_container_width=True):
             st.session_state.pending_image = None
             st.rerun()
 
-# 1:3 비율로 컬럼 분할 (이 행 전체가 위의 CSS에 의해 하단 고정됨)
+# 1:3 비율로 컬럼 분할
 col_img, col_txt = st.columns([1, 3], gap="small")
 
 with col_img:
@@ -603,16 +562,16 @@ with col_img:
         label_visibility="collapsed",
         help="이미지 첨부"
     )
-    # 파일이 선택되면 세션 상태에 임시 저장
     if uploaded_file is not None:
         st.session_state.pending_image = uploaded_file
 
 with col_txt:
-    # 텍스트 입력 (Enter 시 전송)
     prompt = st.chat_input("메시지를 입력하세요... (Enter로 전송)")
 
+st.markdown('</div>', unsafe_allow_html=True)
+
 # ==========================================
-# 🚀 전송 로직 (이미지 + 텍스트 동시 처리)
+# 🚀 전송 로직
 # ==========================================
 if prompt:
     if len(current_chat["messages"]) == 0:
@@ -620,7 +579,6 @@ if prompt:
     
     new_message = {"role": "user", "content": prompt}
     
-    # 대기 중인 이미지가 있다면 함께 묶어서 전송
     if st.session_state.pending_image is not None:
         image_bytes = st.session_state.pending_image.read()
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -628,20 +586,17 @@ if prompt:
             "base64": image_base64,
             "mime_type": st.session_state.pending_image.type
         }
-        # 전송 후 대기 이미지 초기화 (중복 전송 방지)
         st.session_state.pending_image = None
     
     current_chat["messages"].append(new_message)
     if is_logged_in:
         save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
 
-    # 사용자 메시지 화면에 즉시 표시
-    with st.chat_message("user", avatar="👤"):
+    with st.chat_message("user", avatar=""):
         if "image" in new_message:
             st.image(f"data:{new_message['image']['mime_type']};base64,{new_message['image']['base64']}", width=300)
         st.markdown(new_message["content"])
     
-    # AI 응답 처리
     with st.chat_message("assistant", avatar=AI_AVATAR_URL):
         try:
             api_key = os.getenv("NVIDIA_API_KEY")
@@ -655,7 +610,6 @@ if prompt:
                 )
                 
                 data_context = load_relevant_data(prompt if prompt else "이미지 분석")
-                
                 ref_context = ""
                 if is_logged_in and st.session_state[ref_selection_key]:
                     ref_context = collect_reference_chats(
@@ -696,8 +650,7 @@ if prompt:
                 
                 if is_logged_in:
                     save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
-                    
         except APITimeoutError:
-            st.error("⏱️ **요청 시간 초과**: AI 서버 응답이 느리거나 전송된 데이터 양이 너무 많습니다. 질문을 더 간결하게 하거나, '과거 대화 참고' 선택을 줄여주세요.")
+            st.error("⏱️ **요청 시간 초과**: AI 서버 응답이 느립니다. 질문을 더 간결하게 해주세요.")
         except Exception as e:
             st.error(f"오류가 발생했습니다: {e}")
