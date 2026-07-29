@@ -161,18 +161,19 @@ def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_i
     return "\n".join(ref_parts)
 
 # ==========================================
-#  7. 페이지 기본 설정
+# 🚀 7. 페이지 기본 설정
 # ==========================================
 st.set_page_config(page_title="나만의 AI 전기설비 도우미", page_icon=AI_AVATAR_URL, layout="wide")
 
 # ==========================================
-# 🎨 핵심 CSS: 상단(답변) / 하단(입력) 명확 분할
+#  핵심 CSS: 상단(답변) / 하단(입력) 완전 분리
 # ==========================================
 st.markdown("""
 <style>
     /* 전체 페이지 높이 고정 */
     html, body, [class*="css"] {
         height: 100%;
+        overflow: hidden;
     }
     
     /* 메인 컨테이너를 Flexbox로 전환 (세로 방향) */
@@ -182,27 +183,28 @@ st.markdown("""
         height: 100vh !important;
         padding: 0 !important;
         max-width: 100% !important;
+        overflow: hidden !important;
     }
     
-    /* ===== 상단: 답변 영역 ===== */
+    /* ===== 상단: 답변 영역 (파란색 배경) ===== */
     .output-area {
         flex: 1 !important;
         overflow-y: auto !important;
         padding: 20px 30px !important;
-        background-color: #ffffff !important;
+        background-color: #4472C4 !important;
         min-height: 0 !important;
     }
     
-    /* ===== 하단: 입력 영역 ===== */
+    /* ===== 하단: 입력 영역 (주황색 배경) ===== */
     .input-area {
         flex-shrink: 0 !important;
-        background-color: #f1f5f9 !important;
-        border-top: 3px solid #3b82f6 !important;
+        background-color: #ED7D31 !important;
         padding: 15px 30px !important;
-        min-height: 80px !important;
+        min-height: 100px !important;
+        border-top: 4px solid #2F5496 !important;
     }
     
-    /* st.chat_input의 기본 하단 고정 해제 (부모 컨테이너를 따르게 함) */
+    /* st.chat_input의 기본 하단 고정 해제 */
     div[data-testid="stChatInput"] {
         position: static !important;
     }
@@ -210,14 +212,14 @@ st.markdown("""
         position: static !important;
     }
     
-    /* 파일 업로더 스타일 (텍스트 입력창과 높이 맞춤) */
+    /* 파일 업로더 스타일 */
     .stFileUploader [data-testid="stFileUploaderDropzone"] {
-        min-height: 48px !important;
-        max-height: 48px !important;
-        padding: 4px 8px !important;
-        border: 1px dashed #94a3b8 !important;
-        border-radius: 6px !important;
-        background-color: #ffffff !important;
+        min-height: 60px !important;
+        max-height: 60px !important;
+        padding: 8px !important;
+        border: 2px dashed #ffffff !important;
+        border-radius: 8px !important;
+        background-color: rgba(255, 255, 255, 0.2) !important;
     }
     .stFileUploader label {
         display: none !important;
@@ -225,24 +227,28 @@ st.markdown("""
     
     /* 스크롤바 스타일 */
     .output-area::-webkit-scrollbar {
-        width: 8px;
+        width: 10px;
     }
     .output-area::-webkit-scrollbar-track {
-        background: #f1f5f9;
+        background: rgba(255, 255, 255, 0.1);
     }
     .output-area::-webkit-scrollbar-thumb {
-        background-color: #94a3b8;
-        border-radius: 4px;
+        background-color: rgba(255, 255, 255, 0.5);
+        border-radius: 5px;
     }
     
     /* 기존 스타일 유지 */
-    .stTitle { font-weight: 800; color: #1E293B; margin-bottom: 10px; }
+    .stTitle { 
+        font-weight: 800; 
+        color: #ffffff !important;
+        margin-bottom: 10px;
+    }
     .info-box {
-        background-color: #F1F5F9;
+        background-color: rgba(255, 255, 255, 0.95);
         border-radius: 10px;
         padding: 15px;
         margin-bottom: 20px;
-        border-left: 5px solid #3B82F6;
+        border-left: 5px solid #ffffff;
     }
     .guest-notice {
         background-color: #FEF3C7;
@@ -261,22 +267,30 @@ st.markdown("""
         font-size: 0.85em;
     }
     .image-preview-box {
-        background-color: #ffffff;
+        background-color: rgba(255, 255, 255, 0.9);
         border-radius: 6px;
         padding: 8px 12px;
         display: flex;
         align-items: center;
         gap: 12px;
         margin-bottom: 10px;
-        border: 1px solid #cbd5e1;
+        border: 1px solid #ffffff;
+    }
+    
+    /* 채팅 메시지 스타일 */
+    .stChatMessage {
+        background-color: rgba(255, 255, 255, 0.95) !important;
+        border-radius: 8px !important;
+        padding: 15px !important;
+        margin-bottom: 15px !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-#  8. 메인 화면 타이틀
+# 🏠 8. 메인 화면 타이틀
 # ==========================================
-st.title("⚡ 나만의 AI 전기설비 도우미 ⚡")
+st.title(" 나만의 AI 전기설비 도우미 ")
 
 # ==========================================
 # 🔍 9. 로그인 상태 확인 및 세션 키 결정
@@ -321,7 +335,7 @@ with st.sidebar:
         st.markdown("""
             <div class="guest-notice">
                 🎭 <b>게스트 모드</b>로 이용 중입니다.<br>
-                 로그인하면 대화가 <b>영구 저장</b>됩니다!
+                💡 로그인하면 대화가 <b>영구 저장</b>됩니다!
             </div>
         """, unsafe_allow_html=True)
         
@@ -355,7 +369,7 @@ with st.sidebar:
                                 if "rate limit" in error_msg:
                                     st.error("⚠️ 로그인 시도가 너무 많습니다. 1시간 후 다시 시도해 주세요.")
                                 elif "invalid login credentials" in error_msg:
-                                    st.error("로그인 실: 아이디 또는 비밀번호가 올바르지 않습니다.")
+                                    st.error("로그인 실패: 아이디 또는 비밀번호가 올바르지 않습니다.")
                                 else:
                                     st.error(f"로그인 오류: {e}")
                             except Exception as e:
@@ -475,17 +489,17 @@ with st.sidebar:
                 st.caption(f"✨ {len(current_selection)}개 대화 참고 중")
 
 # ==========================================
-# 💬 12. 메인 영역 - 상단(답변) / 하단(입력) 분할
+# 💬 12. 메인 영역 - 상단(답변) / 하단(입력) 완전 분리
 # ==========================================
 
-# --- 상단: 답변 영역 ---
+# --- 상단: 답변 영역 (파란색) ---
 st.markdown('<div class="output-area">', unsafe_allow_html=True)
 
 if not is_logged_in:
     st.markdown("""
         <div class="guest-notice">
             🎭 <b>게스트 모드</b>로 이용 중입니다. 대화는 브라우저를 닫으면 사라집니다.<br>
-            👉 좌측 사이드바에서 <b>회원가입</b> 후 로그인하면 대화가 영구 저장됩니다!
+             좌측 사이드바에서 <b>회원가입</b> 후 로그인하면 대화가 영구 저장됩니다!
         </div>
     """, unsafe_allow_html=True)
 
@@ -500,19 +514,19 @@ if is_logged_in and st.session_state[ref_selection_key]:
             </div>
         """, unsafe_allow_html=True)
 
-st.caption(f"📌 **현재 대화:** {current_chat['title']} |  {display_user_id}")
+st.caption(f"📌 **현재 대화:** {current_chat['title']} | 👤 {display_user_id}")
 
 if len(current_chat["messages"]) == 0:
     st.markdown("""
         <div class="info-box">
-             <b>반갑습니다!</b> 무엇이든 물어보세요.<br>
+            👋 <b>반갑습니다!</b> 무엇이든 물어보세요.<br>
             예시: <i>"접지공사 종류에 대해 알려줘"</i> 또는 <i>아래 이미지 입력창으로 전기 배선도 사진을 업로드하세요.</i>
         </div>
     """, unsafe_allow_html=True)
 
 # 기존 메시지 렌더링
 for message in current_chat["messages"]:
-    avatar = "" if message["role"] == "user" else AI_AVATAR_URL
+    avatar = "👤" if message["role"] == "user" else AI_AVATAR_URL
     with st.chat_message(message["role"], avatar=avatar):
         if "image" in message:
             st.image(f"data:{message['image']['mime_type']};base64,{message['image']['base64']}", width=300)
@@ -520,7 +534,7 @@ for message in current_chat["messages"]:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 하단: 입력 영역 (고정) ---
+# --- 하단: 입력 영역 (주황색) ---
 st.markdown('<div class="input-area">', unsafe_allow_html=True)
 
 # 채팅방 변경 시 대기 이미지 초기화
@@ -546,11 +560,11 @@ if st.session_state.pending_image is not None:
     
     _, col_clear = st.columns([5, 1])
     with col_clear:
-        if st.button("️ 첨부 취소", key="clear_pending", use_container_width=True):
+        if st.button("🗑️ 첨부 취소", key="clear_pending", use_container_width=True):
             st.session_state.pending_image = None
             st.rerun()
 
-# 1:3 비율로 컬럼 분할
+# 1:3 비율로 컬럼 분할 (이미지 1 : 텍스트 3)
 col_img, col_txt = st.columns([1, 3], gap="small")
 
 with col_img:
@@ -592,7 +606,7 @@ if prompt:
     if is_logged_in:
         save_chat_to_db(st.session_state.user.id, current_id, current_chat["title"], current_chat["messages"])
 
-    with st.chat_message("user", avatar=""):
+    with st.chat_message("user", avatar="👤"):
         if "image" in new_message:
             st.image(f"data:{new_message['image']['mime_type']};base64,{new_message['image']['base64']}", width=300)
         st.markdown(new_message["content"])
