@@ -544,7 +544,7 @@ for message in current_chat["messages"]:
         else:
             st.markdown(message["content"])
 
-if prompt := st.chat_input("이미지와 함께 질문을 입력하세요 (예: 이 기기의 명판을 분석해줘)"):
+if prompt := st.chat_input("질문을 입력하세요 (이미지 첨부가능)"):
     if len(current_chat["messages"]) == 0:
         current_chat["title"] = prompt[:15] + "..." if len(prompt) > 15 else prompt
     
