@@ -51,6 +51,9 @@
   - gemini-3.5-flash
   - qwen-3.7-plus
   - deepseek-v4-flash
+- **이미지 생성에 활용한 AI 모델**
+  - Nano Banana 2
+  - GPT Image 2
 - **개발 과정에서 활용한 AI 에이전트**
   - Antigravity
   - ChatGPT Codex
