@@ -68,4 +68,4 @@
 | supabase | Supabase의 기능을 파이썬에서 사용하기 위한 공식 SDK |
 | supabase-auth | Supabase SDK의 하위 호환성 라이브러리 |
 | gemma-4-31b-it | 구글의 오픈 웨이트 LLM |
-| opencodex | OpenAI Codex를 위한 범용 프로바이더 프록시 |
+| opencodex | ChatGPT Codex를 위한 범용 프로바이더 프록시 |
