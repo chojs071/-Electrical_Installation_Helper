@@ -8,6 +8,7 @@ from openai import OpenAI, APITimeoutError
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from supabase_auth.errors import AuthApiError
+from streamlit_cookies_controller import CookieController # 🍪 쿠키 컨트롤러 추가
 
 # ⚠️ gotrue 및 기타 DeprecationWarning 경고 무시 설정
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -26,7 +27,48 @@ if not SUPABASE_URL or not SUPABASE_ANON_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-# ✅ RLS 오류 해결: Streamlit 재실행 시 로그인 세션(토큰) 복원
+# 🍪 쿠키 매니저 초기화
+cookie_controller = CookieController()
+
+# ==========================================
+# 🔧 아이디 → 이메일 변환 헬퍼 함수 (상단으로 이동)
+# ==========================================
+def user_id_to_email(user_id: str) -> str:
+    return f"{user_id}@myapp.local"
+
+def email_to_user_id(email: str) -> str:
+    return email.split("@")[0]
+
+# ==========================================
+# ✅ RLS 오류 해결 및 새로고침 시 로그인 유지 로직
+# ==========================================
+# 1. 쿠키에서 토큰을 가져와 세션 복원 시도 (새로고침 대응)
+access_token = cookie_controller.get("sb_access_token")
+refresh_token = cookie_controller.get("sb_refresh_token")
+user_id_cookie = cookie_controller.get("sb_user_id")
+
+if access_token and refresh_token and access_token != "":
+    try:
+        supabase.auth.set_session(access_token, refresh_token)
+        # 토큰 유효성 검사
+        user_response = supabase.auth.get_user()
+        if user_response and user_response.user:
+            # 세션 객체 복원 (Mock 객체 사용)
+            class SessionMock:
+                def __init__(self, a_token, r_token):
+                    self.access_token = a_token
+                    self.refresh_token = r_token
+            
+            st.session_state.supabase_session = SessionMock(access_token, refresh_token)
+            st.session_state.user = user_response.user
+            st.session_state.display_user_id = user_id_cookie or user_response.user.email.split("@")[0]
+    except Exception:
+        # 토큰이 만료되었거나 유효하지 않으면 쿠키 삭제
+        cookie_controller.remove("sb_access_token")
+        cookie_controller.remove("sb_refresh_token")
+        cookie_controller.remove("sb_user_id")
+
+# 2. 세션 상태에 이미 세션이 있다면 supabase 클라이언트에 다시 설정 (일반 rerun 대비)
 if "supabase_session" in st.session_state and st.session_state.supabase_session is not None:
     try:
         supabase.auth.set_session(
@@ -96,15 +138,6 @@ def load_relevant_data(prompt: str, data_dir="data", max_files: int = 2, max_cha
         context_texts.append(f"--- [참고 파일명: {filename} (전체 파일 중 일부)] ---\n{content[:2000]}...\n")
 
     return "\n".join(context_texts)
-
-# ==========================================
-# 🔧 4. 아이디 → 이메일 변환 헬퍼 함수
-# ==========================================
-def user_id_to_email(user_id: str) -> str:
-    return f"{user_id}@myapp.local"
-
-def email_to_user_id(email: str) -> str:
-    return email.split("@")[0]
 
 # ==========================================
 # 💾 5. Supabase DB 저장/불러오기 함수
@@ -225,20 +258,30 @@ else:
     display_user_id = "게스트"
 
 # ==========================================
-# 💾 10. 세션 상태 초기화
+# 💾 10. 세션 상태 초기화 및 새로고침 대응
 # ==========================================
-if chats_key not in st.session_state:
+
+# 🔄 1. 새로고침(F5) 시 DB에서 대화 목록을 다시 불러오는 로직 추가
+if is_logged_in and chats_key not in st.session_state:
+    db_chats = load_user_chats_from_db(st.session_state.user.id)
+    if db_chats:
+        st.session_state[chats_key] = db_chats
+
+# 🛡️ 2. 대화 목록 딕셔너리가 없거나 비어있으면 기본 대화 1개 무조건 생성
+if chats_key not in st.session_state or not st.session_state[chats_key]:
     initial_id = str(uuid.uuid4())
     st.session_state[chats_key] = {initial_id: {"title": "새로운 대화 1", "messages": []}}
-    st.session_state[current_chat_key] = initial_id
 
-if current_chat_key not in st.session_state:
+# 🛡️ 3. 현재 선택된 대화 ID가 없거나, 유효하지 않은 ID(삭제됨 등)라면 안전하게 첫 번째 대화로 재설정 (KeyError 방지)
+if current_chat_key not in st.session_state or st.session_state[current_chat_key] not in st.session_state[chats_key]:
     st.session_state[current_chat_key] = list(st.session_state[chats_key].keys())[0]
 
+# 4. 과거 대화 참고 선택 초기화
 ref_selection_key = f"ref_selection_{display_user_id}"
 if ref_selection_key not in st.session_state:
     st.session_state[ref_selection_key] = []
 
+# 5. 최종 변수 할당
 current_id = st.session_state[current_chat_key]
 current_chat = st.session_state[chats_key][current_id]
 
@@ -277,6 +320,11 @@ with st.sidebar:
                                     st.session_state.user = response.user
                                     st.session_state.supabase_session = response.session
                                     st.session_state.display_user_id = user_id
+                                    
+                                    # 🍪 쿠키에 토큰 저장
+                                    cookie_controller.set("sb_access_token", response.session.access_token)
+                                    cookie_controller.set("sb_refresh_token", response.session.refresh_token)
+                                    cookie_controller.set("sb_user_id", user_id)
                                     
                                     db_chats = load_user_chats_from_db(response.user.id)
                                     if db_chats:
@@ -324,6 +372,12 @@ with st.sidebar:
                                     st.session_state.user = response.user
                                     st.session_state.supabase_session = response.session
                                     st.session_state.display_user_id = new_user_id
+                                    
+                                    # 🍪 쿠키에 토큰 저장
+                                    cookie_controller.set("sb_access_token", response.session.access_token)
+                                    cookie_controller.set("sb_refresh_token", response.session.refresh_token)
+                                    cookie_controller.set("sb_user_id", new_user_id)
+                                    
                                     st.success(f"🎉 {new_user_id}님, 환영합니다! 자동으로 로그인되었습니다.")
                                     st.rerun()
                                 elif response.user:
@@ -335,6 +389,12 @@ with st.sidebar:
                                         st.session_state.user = login_response.user
                                         st.session_state.supabase_session = login_response.session
                                         st.session_state.display_user_id = new_user_id
+                                        
+                                        # 🍪 쿠키에 토큰 저장
+                                        cookie_controller.set("sb_access_token", login_response.session.access_token)
+                                        cookie_controller.set("sb_refresh_token", login_response.session.refresh_token)
+                                        cookie_controller.set("sb_user_id", new_user_id)
+                                        
                                         st.success(f"🎉 {new_user_id}님, 환영합니다!")
                                         st.rerun()
                                 
@@ -360,10 +420,17 @@ with st.sidebar:
             st.session_state.user = None
             st.session_state.supabase_session = None
             st.session_state.display_user_id = None
+            
+            # 🍪 쿠키 삭제
+            cookie_controller.remove("sb_access_token")
+            cookie_controller.remove("sb_refresh_token")
+            cookie_controller.remove("sb_user_id")
+            
             st.rerun()
         
         st.markdown("---")
     
+    # 나머지 사이드바 및 UI 코드는 기존과 동일하게 유지됩니다.
     st.markdown("### 💬 대화 목록")
     
     if st.button("➕ 새 대화 시작", width="stretch", type="primary"):
