@@ -3,4 +3,3 @@ load-dotenv==0.1.0
 openai==2.47.0
 supabase==2.31.0
 gotrue==2.12.4
-extra-streamlit-components

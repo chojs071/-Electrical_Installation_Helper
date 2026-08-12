@@ -4,7 +4,6 @@ import uuid
 import warnings
 import base64
 import streamlit as st
-import extra_streamlit_components as stx
 from openai import OpenAI, APITimeoutError
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -14,15 +13,7 @@ from supabase_auth.errors import AuthApiError
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ==========================================
-# 🚀 0. 페이지 기본 설정 (가장 위에 위치해야 함)
-# ==========================================
-AI_AVATAR_URL = "https://cdn.phototourl.com/free/2026-07-23-15287eb1-a0dc-42f5-895b-ba283e857248.png"
-SIDEBAR_HEADER_IMAGE = "https://cdn.phototourl.com/free/2026-07-23-b00d3b3d-b411-4d1e-a452-24355967b5ce.png"
-
-st.set_page_config(page_title="나만의 AI 전기설비 도우미", page_icon=AI_AVATAR_URL, layout="centered")
-
-# ==========================================
-# 🔐 1. Supabase & 쿠키 매니저 초기화
+# 🔐 1. Supabase 클라이언트 초기화
 # ==========================================
 load_dotenv()
 
@@ -35,35 +26,22 @@ if not SUPABASE_URL or not SUPABASE_ANON_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-# 쿠키 매니저 초기화 (로그인 유지용)
-cookie_manager = stx.CookieManager(key="auth_cookie_manager")
-
-# 쿠키에서 토큰 읽기
-saved_access_token = cookie_manager.get(cookie="sb_access_token")
-saved_refresh_token = cookie_manager.get(cookie="sb_refresh_token")
-
-# ✅ 자동 로그인 처리: 쿠키 기반 로그인 세션 복원
-if "user" not in st.session_state or st.session_state.user is None:
-    if saved_access_token and saved_refresh_token:
-        try:
-            res = supabase.auth.set_session(saved_access_token, saved_refresh_token)
-            if res.user:
-                st.session_state.user = res.user
-                st.session_state.supabase_session = res.session
-                st.session_state.display_user_id = email_to_user_id(res.user.email) if res.user.email else "유저"
-                
-                # 새로 고침 시 DB에서 대화 목록 복원
-                db_chats = load_user_chats_from_db(res.user.id)
-                if db_chats:
-                    st.session_state[f"chats_{res.user.id}"] = db_chats
-        except Exception as e:
-            # 토큰 만료 등 예외 발생 시 쿠키 삭제
-            cookie_manager.delete("sb_access_token")
-            cookie_manager.delete("sb_refresh_token")
+# ✅ RLS 오류 해결: Streamlit 재실행 시 로그인 세션(토큰) 복원
+if "supabase_session" in st.session_state and st.session_state.supabase_session is not None:
+    try:
+        supabase.auth.set_session(
+            st.session_state.supabase_session.access_token,
+            st.session_state.supabase_session.refresh_token
+        )
+    except Exception:
+        st.session_state.supabase_session = None
 
 # ==========================================
 # 💡 2. 기본 설정 및 프롬프트
 # ==========================================
+AI_AVATAR_URL = "https://cdn.phototourl.com/free/2026-07-23-15287eb1-a0dc-42f5-895b-ba283e857248.png"
+SIDEBAR_HEADER_IMAGE = "https://cdn.phototourl.com/free/2026-07-23-b00d3b3d-b411-4d1e-a452-24355967b5ce.png"
+
 BASE_SYSTEM_PROMPT = """너는 전기설비 분야의 친절하고 전문적인 AI 도우미야.
 반드시 아래에 제공된 [참고 자료]를 바탕으로 정확하게 답변해줘.
 참고한 규정의 항과 파일이름은 말하지 않아도 돼.
@@ -85,6 +63,7 @@ BASE_SYSTEM_PROMPT = """너는 전기설비 분야의 친절하고 전문적인 
 # 📂 3. 데이터 폴더 읽기 함수
 # ==========================================
 def load_relevant_data(prompt: str, data_dir="data", max_files: int = 2, max_chars_per_file: int = 2000):
+    """사용자 질문과 관련된 파일만 선별하여 최대 용량만큼만 반환 (토큰 초과 및 타임아웃 방지)"""
     if not os.path.exists(data_dir):
         return ""
 
@@ -161,12 +140,15 @@ def save_chat_to_db(user_id: str, chat_id: str, title: str, messages: list):
 # ✅ 6. 과거 대화 참고 자료 수집 함수
 # ==========================================
 def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_id: str, max_messages_per_chat: int = 5) -> str:
+    """선택된 과거 대화들의 내용을 참고 자료 문자열로 구성 (토큰 절약을 위해 개수 축소)"""
     if not selected_ids:
         return ""
     
     ref_parts = []
     for chat_id in selected_ids:
-        if chat_id == current_chat_id or chat_id not in chats_dict:
+        if chat_id == current_chat_id:
+            continue
+        if chat_id not in chats_dict:
             continue
         
         chat = chats_dict[chat_id]
@@ -174,6 +156,7 @@ def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_i
         messages = chat.get("messages", [])
         
         recent_messages = messages[-max_messages_per_chat:]
+        
         if not recent_messages:
             continue
         
@@ -187,8 +170,10 @@ def collect_reference_chats(chats_dict: dict, selected_ids: list, current_chat_i
     return "\n".join(ref_parts)
 
 # ==========================================
-# 🎨 UI 스타일 적용
+# 🚀 7. 페이지 기본 설정
 # ==========================================
+st.set_page_config(page_title="나만의 AI 전기설비 도우미", page_icon=AI_AVATAR_URL, layout="centered")
+
 st.markdown("""
     <style>
     .main { padding-top: 2rem; }
@@ -258,7 +243,7 @@ current_id = st.session_state[current_chat_key]
 current_chat = st.session_state[chats_key][current_id]
 
 # ==========================================
-# 👤 11. 사이드바 - 계정 메뉴 & 대화 목록
+# 👤 11. 사이드바 - 계정 메뉴 & 대화 목록 & 과거 대화 참고
 # ==========================================
 with st.sidebar:
     st.image(SIDEBAR_HEADER_IMAGE, width="stretch")
@@ -288,14 +273,10 @@ with st.sidebar:
                             try:
                                 email = user_id_to_email(user_id)
                                 response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                                if response.user and response.session:
+                                if response.user:
                                     st.session_state.user = response.user
                                     st.session_state.supabase_session = response.session
                                     st.session_state.display_user_id = user_id
-                                    
-                                    # ✅ 쿠키에 로그인 토큰 저장 (7일간 유효)
-                                    cookie_manager.set("sb_access_token", response.session.access_token, max_age=7*24*3600)
-                                    cookie_manager.set("sb_refresh_token", response.session.refresh_token, max_age=7*24*3600)
                                     
                                     db_chats = load_user_chats_from_db(response.user.id)
                                     if db_chats:
@@ -339,25 +320,23 @@ with st.sidebar:
                                     "password": new_password
                                 })
                                 
-                                session = response.session
-                                if not session:
-                                    login_res = supabase.auth.sign_in_with_password({
+                                if response.user and response.session:
+                                    st.session_state.user = response.user
+                                    st.session_state.supabase_session = response.session
+                                    st.session_state.display_user_id = new_user_id
+                                    st.success(f"🎉 {new_user_id}님, 환영합니다! 자동으로 로그인되었습니다.")
+                                    st.rerun()
+                                elif response.user:
+                                    login_response = supabase.auth.sign_in_with_password({
                                         "email": email,
                                         "password": new_password
                                     })
-                                    session = login_res.session
-                                    
-                                if response.user and session:
-                                    st.session_state.user = response.user
-                                    st.session_state.supabase_session = session
-                                    st.session_state.display_user_id = new_user_id
-                                    
-                                    # ✅ 쿠키 저장
-                                    cookie_manager.set("sb_access_token", session.access_token, max_age=7*24*3600)
-                                    cookie_manager.set("sb_refresh_token", session.refresh_token, max_age=7*24*3600)
-                                    
-                                    st.success(f"🎉 {new_user_id}님, 환영합니다!")
-                                    st.rerun()
+                                    if login_response.user:
+                                        st.session_state.user = login_response.user
+                                        st.session_state.supabase_session = login_response.session
+                                        st.session_state.display_user_id = new_user_id
+                                        st.success(f"🎉 {new_user_id}님, 환영합니다!")
+                                        st.rerun()
                                 
                             except AuthApiError as e:
                                 error_msg = str(e).lower()
@@ -381,11 +360,6 @@ with st.sidebar:
             st.session_state.user = None
             st.session_state.supabase_session = None
             st.session_state.display_user_id = None
-            
-            # ✅ 쿠키 삭제
-            cookie_manager.delete("sb_access_token")
-            cookie_manager.delete("sb_refresh_token")
-            
             st.rerun()
         
         st.markdown("---")
@@ -472,6 +446,7 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
     
+    # 전송 후 업로더를 초기화하기 위해 동적 키 사용
     img_counter = st.session_state.get("img_counter", 0)
     uploaded_image = st.file_uploader(
         "이미지 파일 선택",
@@ -556,6 +531,7 @@ if len(current_chat["messages"]) == 0:
         </div>
     """, unsafe_allow_html=True)
 
+# ✅ 멀티모달(이미지+텍스트) 메시지 렌더링 처리
 for message in current_chat["messages"]:
     avatar = "👤" if message["role"] == "user" else AI_AVATAR_URL
     with st.chat_message(message["role"], avatar=avatar):
@@ -572,10 +548,12 @@ if prompt := st.chat_input("질문을 입력하세요 (이미지 첨부가능)")
     if len(current_chat["messages"]) == 0:
         current_chat["title"] = prompt[:15] + "..." if len(prompt) > 15 else prompt
     
+    # 사용자 메시지 구성 (멀티모달 지원)
     user_content = []
     if prompt.strip():
         user_content.append({"type": "text", "text": prompt})
     
+    # 업로드된 이미지가 있으면 Base64 인코딩하여 메시지에 추가
     if "current_uploaded_image" in st.session_state and st.session_state.current_uploaded_image is not None:
         img_file = st.session_state.current_uploaded_image
         img_bytes = img_file.read()
@@ -587,9 +565,11 @@ if prompt := st.chat_input("질문을 입력하세요 (이미지 첨부가능)")
             "image_url": {"url": f"data:{mime_type};base64,{img_base64}"}
         })
         
+        # 전송 후 세션 및 업로더 초기화 (중복 전송 방지)
         del st.session_state.current_uploaded_image
         st.session_state.img_counter = st.session_state.get("img_counter", 0) + 1
 
+    # content가 리스트인지 문자열인지에 따라 포맷팅 (DB 호환성 유지)
     if len(user_content) == 1 and user_content[0]["type"] == "text":
         final_user_message = {"role": "user", "content": user_content[0]["text"]}
     else:
@@ -643,8 +623,9 @@ if prompt := st.chat_input("질문을 입력하세요 (이미지 첨부가능)")
                 
                 messages_to_send = [{"role": "system", "content": system_prompt}] + recent_messages
                 
+                # ✅ 기존에 사용하시던 비전 지원 모델명 유지 (Gemma 비전 모델)
                 stream = client.chat.completions.create(
-                    model="google/gemma-4-31b-it",
+                    model="google/gemma-4-31b-it",  # 필요시 실제 NVIDIA API의 정확한 Gemma 비전 모델명으로 수정 가능 (예: google/gemma-3-27b-it)
                     messages=messages_to_send,
                     stream=True
                 )
