@@ -664,7 +664,7 @@ if prompt := st.chat_input("질문을 입력하세요 (이미지 첨부가능)")
                 st.error("⚠️ NVIDIA_API_KEY가 설정되지 않았습니다.")
             else:
                 client = OpenAI(
-                    base_url="https://integrate.api.nvidia.com/v1", 
+                    base_url="https://ollama.com/v1", 
                     api_key=api_key,
                     timeout=120.0
                 )
@@ -692,7 +692,7 @@ if prompt := st.chat_input("질문을 입력하세요 (이미지 첨부가능)")
                 
                 # ✅ 기존에 사용하시던 비전 지원 모델명 유지 (Gemma 비전 모델)
                 stream = client.chat.completions.create(
-                    model="google/gemma-4-31b-it",  # 필요시 실제 NVIDIA API의 정확한 Gemma 비전 모델명으로 수정 가능 (예: google/gemma-3-27b-it)
+                    model="gemma4:31b-cloud",  # 필요시 실제 NVIDIA API의 정확한 Gemma 비전 모델명으로 수정 가능 (예: google/gemma-3-27b-it)
                     messages=messages_to_send,
                     stream=True
                 )
