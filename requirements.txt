@@ -1,5 +1,0 @@
-streamlit==1.60.0
-load-dotenv==0.1.0
-openai==2.47.0
-supabase==2.31.0
-streamlit-cookies-controller==0.0.4
