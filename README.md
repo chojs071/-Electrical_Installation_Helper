@@ -69,10 +69,6 @@
 ## 사용한 오픈소스 패키지
 | 패키지 | 용도 |
 | -------- | ------- |
-| streamlit | 웹 앱 프레임워크 |
 | openai | OpenAI 호환 API에 요청을 보내고 응답을 처리하는 라이브러리 |
-| python-dotenv | .env파일의 환경변수를 불러오는 라이브러리 |
-| supabase | Supabase의 기능을 파이썬에서 사용하기 위한 공식 SDK |
-| supabase-auth | Supabase SDK의 하위 호환성 라이브러리 |
 | gemma-4-31b-it | 구글의 오픈 웨이트 LLM |
 | opencodex | ChatGPT Codex를 위한 범용 프로바이더 프록시 |
