@@ -10,16 +10,37 @@ export interface StreamChatOptions {
 const TIMEOUT_MESSAGE =
   "⏱️ **요청 시간 초과**: AI 서버 응답이 느리거나 전송된 데이터 양이 너무 많습니다. 질문을 더 간결하게 하거나, '과거 대화 참고' 선택을 줄여주세요.";
 
+/** OpenAI/Ollama 스타일 JSON 오류면 message만 뽑아 표시 */
+function extractErrorMessage(body: string): string {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      const err = record.error;
+      if (typeof err === "string") return err;
+      if (err && typeof err === "object") {
+        const nested = (err as Record<string, unknown>).message;
+        if (typeof nested === "string") return nested;
+      }
+      if (typeof record.message === "string") return record.message;
+    }
+  } catch {
+    // JSON이 아니면 원문 표시
+  }
+  return body.slice(0, 200);
+}
+
 /** OpenAI 호환 API로 스트리밍 답변 요청 (원본과 동일: /v1/chat/completions, stream) */
 export async function streamChatCompletion({
   systemPrompt,
   messages,
   onDelta,
 }: StreamChatOptions): Promise<string> {
+  // Cloudflare Pages 배포 시 키는 서버 Functions가 주입하므로
+  // 클라이언트 키는 로컬 dev용(선택). 없으면 헤더 없이 보내고 서버가 판단한다.
   const apiKey = import.meta.env.VITE_NVIDIA_API_KEY;
-  if (!apiKey) {
-    throw new Error("⚠️ NVIDIA_API_KEY가 설정되지 않았습니다.");
-  }
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   const controller = new AbortController();
   let timedOut = false;
@@ -31,10 +52,7 @@ export async function streamChatCompletion({
   try {
     const res = await fetch(`${AI_BASE_URL}/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers,
       body: JSON.stringify({
         model: AI_MODEL,
         messages: [{ role: "system", content: systemPrompt }, ...messages],
@@ -45,7 +63,7 @@ export async function streamChatCompletion({
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`AI API 오류 (${res.status}): ${body.slice(0, 200)}`);
+      throw new Error(`AI API 오류 (${res.status}): ${extractErrorMessage(body)}`);
     }
     if (!res.body) {
       throw new Error("이 브라우저는 스트리밍 응답을 지원하지 않습니다.");
@@ -99,9 +117,11 @@ export async function streamChatCompletion({
     ) {
       throw new Error(
         `🌐 **AI 서버에 연결하지 못했습니다 (Failed to fetch)**\n\n` +
-          `원인 1순위: 브라우저 CORS 차단 — 현재 요청 주소: \`${AI_BASE_URL}/chat/completions\`\n` +
-          `해결: \`npm run dev\`로 실행 중이면 dev 서버를 재시작하세요 (vite 프록시 \`/api/ai\` 적용됨). \`VITE_AI_BASE_URL\`을 \`https://ollama.com/v1\`로 직접 지정했다면 지우거나 \`/api/ai\`로 바꾸세요.\n\n` +
-          `그 외 확인: ① \`.env\`의 \`VITE_NVIDIA_API_KEY\` 설정 후 dev 서버 재시작 ② 인터넷/VPN/광고차단 확장 확인 ③ F12 콘솔의 CORS 문구 확인 (원본: ${raw})`
+          (AI_BASE_URL.startsWith("/")
+            ? `same-origin(\`${AI_BASE_URL}\`) 요청 실패 — \`npm run dev\`가 꺼져 있거나, 배포 환경에 Functions가 포함되지 않았을 수 있습니다. dev 서버 실행 상태와 배포 로그를 확인하세요.\n\n`
+            : `원인 1순위: 브라우저 CORS 차단 — 현재 요청 주소: \`${AI_BASE_URL}/chat/completions\`\n` +
+              `해결: \`VITE_AI_BASE_URL\`을 지우거나 \`/api/ai\`로 바꾸세요 (dev 프록시/Cloudflare Functions 경유).\n\n`) +
+          `그 외 확인: ① 인터넷/VPN/광고차단 확장 확인 ② F12 콘솔의 CORS 문구 확인 (원본: ${raw})`
       );
     }
     throw e instanceof Error ? e : new Error(String(e));

@@ -4,10 +4,11 @@ export const AI_AVATAR_URL =
 export const SIDEBAR_HEADER_IMAGE =
   "https://cdn.phototourl.com/free/2026-07-23-b00d3b3d-b411-4d1e-a452-24355967b5ce.png";
 
-// dev(`npm run dev`)에서는 기본값으로 vite 프록시(/api/ai → https://ollama.com/v1)를
-// 사용해 브라우저 CORS 차단을 회피. 직접 호출이 필요하면 .env에 VITE_AI_BASE_URL 명시.
-export const AI_BASE_URL =
-  import.meta.env.VITE_AI_BASE_URL || (import.meta.env.DEV ? "/api/ai" : "https://ollama.com/v1");
+// AI 호출은 항상 same-origin /api/ai 경유.
+// - npm run dev: vite 프록시가 https://ollama.com/v1 로 전달 (CORS 회피)
+// - Cloudflare Pages: functions/api/ai/chat/completions.ts 가 서버 시크릿 키로 호출
+// 직접 호출이 필요하면 .env에 VITE_AI_BASE_URL 명시.
+export const AI_BASE_URL = import.meta.env.VITE_AI_BASE_URL || "/api/ai";
 export const AI_MODEL = import.meta.env.VITE_AI_MODEL || "gemma4:31b-cloud";
 export const AI_TIMEOUT_MS = 120_000;
 
