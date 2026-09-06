@@ -1,0 +1,7 @@
+# Bun 설정 (https://bun.sh/docs/runtime/bunfig)
+[install]
+# package-lock.json 이 이미 있어도 bun 은 bun.lock 을 사용합니다
+exact = false
+
+[install.cache]
+disable = false
