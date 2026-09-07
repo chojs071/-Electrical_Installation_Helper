@@ -50,13 +50,15 @@
 - **개발 과정에서 활용한 AI 모델**
   - gemini-3.5-flash
   - qwen-3.7-plus
-  - deepseek-v4-flash
+  - deepseek-v4-flash(0423버전)
+  - muse-spark-1.3
 - **이미지 생성에 활용한 AI 모델**
   - Nano Banana 2
   - GPT Image 2
 - **개발 과정에서 활용한 AI 에이전트**
   - Antigravity
   - ChatGPT Codex
+  - OpenCode
 - **활용 내용**
   - 백엔드 개발
   - 프론트엔드 개발
@@ -72,3 +74,6 @@
 | openai | OpenAI 호환 API에 요청을 보내고 응답을 처리하는 라이브러리 |
 | gemma-4-31b-it | 구글의 오픈 웨이트 LLM |
 | opencodex | ChatGPT Codex를 위한 범용 프로바이더 프록시 |
+
+## 데이터 출처
+- https://www.law.go.kr/행정규칙/한국전기설비규정
