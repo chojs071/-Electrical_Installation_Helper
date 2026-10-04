@@ -1,5 +1,5 @@
 import { AI_BASE_URL, AI_MODEL, AI_TIMEOUT_MS, IMAGE_DESCRIBE_PROMPT, VISION_MODEL } from "./constants";
-import type { ChatMessage } from "./types";
+import type { ChatMessage, TextPart } from "./types";
 
 export interface StreamChatOptions {
   systemPrompt: string;
@@ -25,9 +25,35 @@ function extractErrorMessage(body: string): string {
       if (typeof record.message === "string") return record.message;
     }
   } catch {
-    // JSON이 아니면 원문 표시
+    // JSON이 아니면 원문 표시 (upstream의 "[400]: ..." 접두어는 제거)
   }
-  return body.slice(0, 200);
+  return body.replace(/^\[\s*\d+\s*\]:\s*/, "").slice(0, 200);
+}
+
+/** 모델의 이미지 입력 거부 오류인지 판별 (텍스트 전용 모델 감지용) */
+export function isImageRejection(e: unknown): boolean {
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return (
+    msg.includes("image") &&
+    (msg.includes("not allowed") ||
+      msg.includes("not supported") ||
+      msg.includes("unsupported") ||
+      msg.includes("does not support") ||
+      msg.includes("invalid") ||
+      msg.includes("vision"))
+  );
+}
+
+/** 멀티모달 메시지에서 이미지 부분을 제거 (텍스트 전용 모델 재시도용) */
+export function stripImageParts(history: ChatMessage[]): ChatMessage[] {
+  return history.map((msg) => {
+    if (typeof msg.content === "string") return msg;
+    const texts = msg.content
+      .filter((p): p is TextPart => p.type === "text")
+      .map((p) => p.text)
+      .join("\n");
+    return { ...msg, content: texts || "(이미지 첨부됨)" };
+  });
 }
 
 /** OpenAI 호환 API로 스트리밍 답변 요청 (원본과 동일: /v1/chat/completions, stream) */
