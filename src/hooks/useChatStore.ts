@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { describeImage, isImageRejection, streamChatCompletion, stripImageParts } from "@/lib/ai";
+import { describeImage, isImageRejection, streamChatCompletion, stripImageParts, toApiHistory } from "@/lib/ai";
 import {
   BASE_SYSTEM_PROMPT,
+  IMAGE_DESC_PREFIX,
   MAX_HISTORY_MESSAGES,
   REF_MAX_CHATS,
   REF_MESSAGES_PER_CHAT,
@@ -272,7 +273,42 @@ export function useChatStore(user: SessionUser | null) {
         if (dataContext) systemPrompt += `\n\n[참고 자료]\n${dataContext}`;
         if (refContext) systemPrompt += `\n\n[과거 대화 참고 자료]\n${refContext}`;
 
-        const history = messages.slice(-MAX_HISTORY_MESSAGES);
+        // 설명문은 저장된 사용자 메시지에도 내장 (과거 턴·참고 대화에서 이미지 맥락 유지).
+        // 화면 표시 시 ChatMessage가 prefix 기준으로 숨김.
+        let apiMessages = messages;
+        if (imageDescription) {
+          const target = messages[messages.length - 1];
+          if (target && target.role === "user") {
+            const first: TextPart =
+              typeof target.content === "string"
+                ? { type: "text", text: target.content }
+                : { type: "text", text: "" };
+            const rest: Array<TextPart | ImagePart> =
+              typeof target.content === "string" ? [] : target.content;
+            const descPart: TextPart = {
+              type: "text",
+              text: `${IMAGE_DESC_PREFIX}\n${imageDescription}`,
+            };
+            const withDesc: ChatMessage = {
+              ...target,
+              content: [...(first.text ? [first] : rest), descPart],
+            };
+            apiMessages = [...messages.slice(0, -1), withDesc];
+            setChats((prev) =>
+              prev.map((c) => {
+                if (c.id !== chatId) return c;
+                const msgs = [...c.messages];
+                if (msgs[baseMessages.length]?.role === "user") {
+                  msgs[baseMessages.length] = withDesc;
+                }
+                return { ...c, messages: msgs };
+              })
+            );
+          }
+        }
+
+        // 과거 턴의 이미지 바이트는 전송하지 않음 (마지막 메시지의 이미지만 유지)
+        const history = toApiHistory(apiMessages.slice(-MAX_HISTORY_MESSAGES));
         const historyHasImage = history.some((m) => typeof m.content !== "string");
         let full: string;
         try {
@@ -282,15 +318,18 @@ export function useChatStore(user: SessionUser | null) {
             onDelta: appendDelta,
           });
         } catch (e) {
-          // 텍스트 전용 모델이 이미지를 거부한 경우: 설명 텍스트만으로 재시도
-          if (historyHasImage && imageDescription && isImageRejection(e)) {
+          // 텍스트 전용 모델이 이미지를 거부한 경우
+          if (!historyHasImage || !isImageRejection(e)) throw e;
+          if (imageDescription || !imageDataUrl) {
+            // 설명이 있거나(이번 턴) 과거 이미지 follow-up이면 텍스트만으로 재시도
             clearStreamingMessage();
             full = await streamChatCompletion({
               systemPrompt,
               messages: stripImageParts(history),
               onDelta: appendDelta,
             });
-          } else if (historyHasImage && isImageRejection(e)) {
+          } else {
+            // 갓 첨부한 이미지를 설명조차 못하면 비전 모델 교체 안내
             throw new Error(
               `🖼️ **현재 모델이 이미지를 처리하지 못했습니다**\n\n` +
                 `이미지가 포함된 요청이 거부되었습니다. 비전(이미지 입력) 지원 모델로 교체하세요.\n` +
@@ -298,16 +337,14 @@ export function useChatStore(user: SessionUser | null) {
                 `- 로컬: \`.env\`의 \`VITE_VISION_MODEL\`·\`VITE_AI_MODEL\` 변경 후 dev 재시작\n` +
                 `(원본: ${e instanceof Error ? e.message : String(e)})`
             );
-          } else {
-            throw e;
           }
         }
 
-        // AI 응답 저장
+        // AI 응답 저장 (설명문 내장 버전으로 저장해 과거 턴 맥락 유지)
         if (user) {
           const finalChat: Chat = {
             ...updatedChat,
-            messages: [...messages, { role: "assistant", content: full }],
+            messages: [...apiMessages, { role: "assistant", content: full }],
           };
           setChats((prev) => prev.map((c) => (c.id === chatId ? finalChat : c)));
           try {
