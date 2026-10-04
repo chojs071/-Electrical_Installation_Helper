@@ -1,5 +1,5 @@
-import { AI_BASE_URL, AI_MODEL, AI_TIMEOUT_MS } from "./constants";
-import type { ChatMessage } from "./types";
+import { AI_BASE_URL, AI_MODEL, AI_TIMEOUT_MS, IMAGE_DESCRIBE_PROMPT, VISION_MODEL } from "./constants";
+import type { ChatMessage, TextPart } from "./types";
 
 export interface StreamChatOptions {
   systemPrompt: string;
@@ -25,9 +25,53 @@ function extractErrorMessage(body: string): string {
       if (typeof record.message === "string") return record.message;
     }
   } catch {
-    // JSON이 아니면 원문 표시
+    // JSON이 아니면 원문 표시 (upstream의 "[400]: ..." 접두어는 제거)
   }
-  return body.slice(0, 200);
+  return body.replace(/^\[\s*\d+\s*\]:\s*/, "").slice(0, 200);
+}
+
+/** 모델의 이미지 입력 거부 오류인지 판별 (텍스트 전용 모델 감지용) */
+export function isImageRejection(e: unknown): boolean {
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return (
+    msg.includes("image") &&
+    (msg.includes("not allowed") ||
+      msg.includes("not supported") ||
+      msg.includes("unsupported") ||
+      msg.includes("does not support") ||
+      msg.includes("invalid") ||
+      msg.includes("vision"))
+  );
+}
+
+/** 멀티모달 메시지에서 이미지 부분을 제거 (텍스트 전용 모델 재시도용) */
+export function stripImageParts(history: ChatMessage[]): ChatMessage[] {
+  return history.map((msg) => {
+    if (typeof msg.content === "string") return msg;
+    const texts = msg.content
+      .filter((p): p is TextPart => p.type === "text")
+      .map((p) => p.text)
+      .join("\n");
+    return { ...msg, content: texts || "(이미지 첨부됨)" };
+  });
+}
+
+/**
+ * API 전송용 히스토리 변환: 이미지는 마지막 메시지에만 남기고,
+ * 과거 메시지의 이미지 바이트는 제거(텍스트·내장 설명문은 유지).
+ * 매 턴 수 MB base64를 재전송하는 낭비 + 텍스트 전용 모델의 반복 거부를 방지.
+ */
+export function toApiHistory(history: ChatMessage[]): ChatMessage[] {
+  return history.map((msg, i) => {
+    if (typeof msg.content === "string") return msg;
+    if (!msg.content.some((p) => p.type === "image_url")) return msg;
+    if (i === history.length - 1) return msg;
+    const texts = msg.content
+      .filter((p): p is TextPart => p.type === "text")
+      .map((p) => p.text)
+      .join("\n");
+    return { ...msg, content: texts || "(이전 첨부 이미지)" };
+  });
 }
 
 /** OpenAI 호환 API로 스트리밍 답변 요청 (원본과 동일: /v1/chat/completions, stream) */
@@ -38,7 +82,7 @@ export async function streamChatCompletion({
 }: StreamChatOptions): Promise<string> {
   // Cloudflare Pages 배포 시 키는 서버 Functions가 주입하므로
   // 클라이언트 키는 로컬 dev용(선택). 없으면 헤더 없이 보내고 서버가 판단한다.
-  const apiKey = import.meta.env.VITE_NVIDIA_API_KEY;
+  const apiKey = import.meta.env.VITE_AI_API_KEY || import.meta.env.VITE_NVIDIA_API_KEY;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
@@ -124,6 +168,75 @@ export async function streamChatCompletion({
           `그 외 확인: ① 인터넷/VPN/광고차단 확장 확인 ② F12 콘솔의 CORS 문구 확인 (원본: ${raw})`
       );
     }
+    throw e instanceof Error ? e : new Error(String(e));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** non-stream 응답에서 본문 텍스트 추출 */
+function extractCompletionText(data: unknown): string {
+  if (data && typeof data === "object") {
+    const choices = (data as Record<string, unknown>).choices;
+    if (Array.isArray(choices)) {
+      const first = choices[0] as Record<string, unknown> | undefined;
+      const message = first?.message as Record<string, unknown> | undefined;
+      const content = message?.content;
+      if (typeof content === "string") return content;
+      const delta = (first?.delta as Record<string, unknown> | undefined)?.content;
+      if (typeof delta === "string") return delta;
+    }
+  }
+  return "";
+}
+
+/**
+ * 첨부 이미지를 전담 모델로 한국어로 설명 (non-stream).
+ * 본 답변 전에 호출되며, 실패해도 throw만 하므로 호출 측에서 무시하고 진행 가능.
+ */
+export async function describeImage(imageDataUrl: string): Promise<string> {
+  const apiKey = import.meta.env.VITE_AI_API_KEY || import.meta.env.VITE_NVIDIA_API_KEY;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, AI_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${AI_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: VISION_MODEL,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: IMAGE_DESCRIBE_PROMPT },
+              { type: "image_url", image_url: { url: imageDataUrl } },
+            ],
+          },
+        ],
+        stream: false,
+        // 서버 식별용 마커: Functions가 upstream 전달 전 제거하고 VISION_MODEL 우선 적용
+        describe_only: true,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`이미지 분석 실패 (${res.status}): ${extractErrorMessage(body)}`);
+    }
+    const text = extractCompletionText(await res.json().catch(() => null)).trim();
+    if (!text) throw new Error("이미지 분석 결과가 비어 있습니다.");
+    return text;
+  } catch (e) {
+    if (timedOut) throw new Error("⏱️ **이미지 분석 시간 초과**: 이미지가 크면 축소해서 다시 올려주세요.");
     throw e instanceof Error ? e : new Error(String(e));
   } finally {
     clearTimeout(timer);

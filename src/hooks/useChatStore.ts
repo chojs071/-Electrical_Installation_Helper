@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { streamChatCompletion } from "@/lib/ai";
+import { describeImage, isImageRejection, streamChatCompletion, stripImageParts, toApiHistory } from "@/lib/ai";
 import {
   BASE_SYSTEM_PROMPT,
+  IMAGE_DESC_PREFIX,
   MAX_HISTORY_MESSAGES,
   REF_MAX_CHATS,
   REF_MESSAGES_PER_CHAT,
@@ -191,9 +192,10 @@ export function useChatStore(user: SessionUser | null) {
       }
 
       // 사용자 메시지 구성 (멀티모달: 텍스트 + 선택 시 이미지)
+      const imageDataUrl = pendingImage;
       const parts: Array<TextPart | ImagePart> = [{ type: "text", text }];
-      if (pendingImage) {
-        parts.push({ type: "image_url", image_url: { url: pendingImage } });
+      if (imageDataUrl) {
+        parts.push({ type: "image_url", image_url: { url: imageDataUrl } });
         setPendingImage(null);
       }
       const userMessage: ChatMessage =
@@ -237,27 +239,112 @@ export function useChatStore(user: SessionUser | null) {
         );
       };
 
+      // 재시도 전 스트리밍 placeholder 초기화 (부분 출력이 있으면 지움)
+      const clearStreamingMessage = () => {
+        setChats((prev) =>
+          prev.map((c) => {
+            if (c.id !== chatId) return c;
+            const msgs = [...c.messages];
+            if (msgs.length === 0) return c;
+            msgs[msgs.length - 1] = { role: "assistant", content: "" };
+            return { ...c, messages: msgs };
+          })
+        );
+      };
+
       try {
+        // 첨부 이미지는 전담 모델이 먼저 한국어로 설명 → 본 답변 컨텍스트로 전달.
+        let imageDescription = "";
+        if (imageDataUrl) {
+          try {
+            imageDescription = await describeImage(imageDataUrl);
+          } catch {
+            imageDescription = "";
+          }
+        }
+
         const dataContext = loadRelevantData(text);
         const refContext = user
           ? collectReferenceChats(chatsRef.current, refSelection, chatId)
           : "";
 
         let systemPrompt = BASE_SYSTEM_PROMPT;
+        if (imageDescription) systemPrompt += `\n\n[첨부 이미지 분석]\n${imageDescription}`;
         if (dataContext) systemPrompt += `\n\n[참고 자료]\n${dataContext}`;
         if (refContext) systemPrompt += `\n\n[과거 대화 참고 자료]\n${refContext}`;
 
-        const full = await streamChatCompletion({
-          systemPrompt,
-          messages: messages.slice(-MAX_HISTORY_MESSAGES),
-          onDelta: appendDelta,
-        });
+        // 설명문은 저장된 사용자 메시지에도 내장 (과거 턴·참고 대화에서 이미지 맥락 유지).
+        // 화면 표시 시 ChatMessage가 prefix 기준으로 숨김.
+        let apiMessages = messages;
+        if (imageDescription) {
+          const target = messages[messages.length - 1];
+          if (target && target.role === "user") {
+            const first: TextPart =
+              typeof target.content === "string"
+                ? { type: "text", text: target.content }
+                : { type: "text", text: "" };
+            const rest: Array<TextPart | ImagePart> =
+              typeof target.content === "string" ? [] : target.content;
+            const descPart: TextPart = {
+              type: "text",
+              text: `${IMAGE_DESC_PREFIX}\n${imageDescription}`,
+            };
+            const withDesc: ChatMessage = {
+              ...target,
+              content: [...(first.text ? [first] : rest), descPart],
+            };
+            apiMessages = [...messages.slice(0, -1), withDesc];
+            setChats((prev) =>
+              prev.map((c) => {
+                if (c.id !== chatId) return c;
+                const msgs = [...c.messages];
+                if (msgs[baseMessages.length]?.role === "user") {
+                  msgs[baseMessages.length] = withDesc;
+                }
+                return { ...c, messages: msgs };
+              })
+            );
+          }
+        }
 
-        // AI 응답 저장
+        // 과거 턴의 이미지 바이트는 전송하지 않음 (마지막 메시지의 이미지만 유지)
+        const history = toApiHistory(apiMessages.slice(-MAX_HISTORY_MESSAGES));
+        const historyHasImage = history.some((m) => typeof m.content !== "string");
+        let full: string;
+        try {
+          full = await streamChatCompletion({
+            systemPrompt,
+            messages: history,
+            onDelta: appendDelta,
+          });
+        } catch (e) {
+          // 텍스트 전용 모델이 이미지를 거부한 경우
+          if (!historyHasImage || !isImageRejection(e)) throw e;
+          if (imageDescription || !imageDataUrl) {
+            // 설명이 있거나(이번 턴) 과거 이미지 follow-up이면 텍스트만으로 재시도
+            clearStreamingMessage();
+            full = await streamChatCompletion({
+              systemPrompt,
+              messages: stripImageParts(history),
+              onDelta: appendDelta,
+            });
+          } else {
+            // 갓 첨부한 이미지를 설명조차 못하면 비전 모델 교체 안내
+            throw new Error(
+              `🖼️ **현재 모델이 이미지를 처리하지 못했습니다**\n\n` +
+                `이미지가 포함된 요청이 거부되었습니다. 비전(이미지 입력) 지원 모델로 교체하세요.\n` +
+                `- Cloudflare: \`VISION_MODEL\`·\`AI_MODEL\`에 비전 지원 모델 지정 (예: \`gpt-4o-mini\`)\n` +
+                `- 로컬: \`.env\`의 \`VITE_VISION_MODEL\`·\`VITE_AI_MODEL\` 변경 후 dev 재시작\n` +
+                `(원본: ${e instanceof Error ? e.message : String(e)})`
+            );
+          }
+        }
+
+        // AI 응답 저장 (설명문 내장 버전으로 저장해 과거 턴 맥락 유지)
         if (user) {
           const finalChat: Chat = {
             ...updatedChat,
-            messages: [...messages, { role: "assistant", content: full }],
+            messages: [...apiMessages, { role: "assistant", content: full }],
           };
           setChats((prev) => prev.map((c) => (c.id === chatId ? finalChat : c)));
           try {

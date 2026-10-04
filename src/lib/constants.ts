@@ -12,6 +12,19 @@ export const AI_BASE_URL = import.meta.env.VITE_AI_BASE_URL || "/api/ai";
 export const AI_MODEL = import.meta.env.VITE_AI_MODEL || "gemma4:31b-cloud";
 export const AI_TIMEOUT_MS = 120_000;
 
+// 이미지 설명 전담 모델. 미지정 시 본 모델과 동일. 서버 VISION_MODEL 지정 시 우선.
+export const VISION_MODEL = import.meta.env.VITE_VISION_MODEL || AI_MODEL;
+
+// 채팅에 저장되는 이미지 설명문의 식별 prefix (모델 컨텍스트용, 화면에는 표시하지 않음)
+export const IMAGE_DESC_PREFIX = "[[첨부 이미지 설명]]";
+
+// 이미지 첨부 시 describer에게 보내는 지시문 (설명만, 답변·추측 금지)
+export const IMAGE_DESCRIBE_PROMPT = `첨부된 이미지를 한국어로 자세히 설명해줘. 설명만 하고, 질문에 대한 답변이나 추측은 하지 마.
+- 전체 장면과 구도를 먼저 한 줄로 요약해줘.
+- 이미지 속 글자·숫자·기호는 보이는 그대로 옮겨 적어줘.
+- 전기설비 관련 요소(배선, 차단기, 계기, 단자, 접지 등)가 보이면 명칭과 상태를 짚어줘.
+- 색상과 위치 관계(왼쪽/오른쪽/위/아래)도 포함해줘.`;
+
 // 최근 10개 메시지만 히스토리로 전송
 export const MAX_HISTORY_MESSAGES = 10;
 // 과거 대화 참고: 최대 3개, 대화당 최근 5개 메시지
