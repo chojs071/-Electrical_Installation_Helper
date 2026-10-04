@@ -29,6 +29,11 @@ env/
 # 노드 패키지 폴더 차단
 node_modules/
 
+# [빌드 산출물] Vite 빌드 결과물 및 로컬 전용 env 파일 차단
+dist/
+dist-ssr/
+*.local
+
 # 운영체제 및 VS Code 에디터 전용 개인 설정 임시 파일 차단
 .DS_Store
 Thumbs.db
