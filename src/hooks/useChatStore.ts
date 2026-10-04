@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { streamChatCompletion } from "@/lib/ai";
+import { describeImage, streamChatCompletion } from "@/lib/ai";
 import {
   BASE_SYSTEM_PROMPT,
   MAX_HISTORY_MESSAGES,
@@ -191,9 +191,10 @@ export function useChatStore(user: SessionUser | null) {
       }
 
       // 사용자 메시지 구성 (멀티모달: 텍스트 + 선택 시 이미지)
+      const imageDataUrl = pendingImage;
       const parts: Array<TextPart | ImagePart> = [{ type: "text", text }];
-      if (pendingImage) {
-        parts.push({ type: "image_url", image_url: { url: pendingImage } });
+      if (imageDataUrl) {
+        parts.push({ type: "image_url", image_url: { url: imageDataUrl } });
         setPendingImage(null);
       }
       const userMessage: ChatMessage =
@@ -238,12 +239,24 @@ export function useChatStore(user: SessionUser | null) {
       };
 
       try {
+        // 첨부 이미지는 전담 모델이 먼저 한국어로 설명 → 본 답변 컨텍스트로 전달.
+        // 설명 실패 시에도 원본 이미지와 함께 전송하므로 답변은 계속 진행.
+        let imageDescription = "";
+        if (imageDataUrl) {
+          try {
+            imageDescription = await describeImage(imageDataUrl);
+          } catch {
+            imageDescription = "";
+          }
+        }
+
         const dataContext = loadRelevantData(text);
         const refContext = user
           ? collectReferenceChats(chatsRef.current, refSelection, chatId)
           : "";
 
         let systemPrompt = BASE_SYSTEM_PROMPT;
+        if (imageDescription) systemPrompt += `\n\n[첨부 이미지 분석]\n${imageDescription}`;
         if (dataContext) systemPrompt += `\n\n[참고 자료]\n${dataContext}`;
         if (refContext) systemPrompt += `\n\n[과거 대화 참고 자료]\n${refContext}`;
 
