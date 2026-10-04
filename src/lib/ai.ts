@@ -56,6 +56,24 @@ export function stripImageParts(history: ChatMessage[]): ChatMessage[] {
   });
 }
 
+/**
+ * API 전송용 히스토리 변환: 이미지는 마지막 메시지에만 남기고,
+ * 과거 메시지의 이미지 바이트는 제거(텍스트·내장 설명문은 유지).
+ * 매 턴 수 MB base64를 재전송하는 낭비 + 텍스트 전용 모델의 반복 거부를 방지.
+ */
+export function toApiHistory(history: ChatMessage[]): ChatMessage[] {
+  return history.map((msg, i) => {
+    if (typeof msg.content === "string") return msg;
+    if (!msg.content.some((p) => p.type === "image_url")) return msg;
+    if (i === history.length - 1) return msg;
+    const texts = msg.content
+      .filter((p): p is TextPart => p.type === "text")
+      .map((p) => p.text)
+      .join("\n");
+    return { ...msg, content: texts || "(이전 첨부 이미지)" };
+  });
+}
+
 /** OpenAI 호환 API로 스트리밍 답변 요청 (원본과 동일: /v1/chat/completions, stream) */
 export async function streamChatCompletion({
   systemPrompt,

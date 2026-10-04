@@ -15,6 +15,9 @@ export const AI_TIMEOUT_MS = 120_000;
 // 이미지 설명 전담 모델. 미지정 시 본 모델과 동일. 서버 VISION_MODEL 지정 시 우선.
 export const VISION_MODEL = import.meta.env.VITE_VISION_MODEL || AI_MODEL;
 
+// 채팅에 저장되는 이미지 설명문의 식별 prefix (모델 컨텍스트용, 화면에는 표시하지 않음)
+export const IMAGE_DESC_PREFIX = "[[첨부 이미지 설명]]";
+
 // 이미지 첨부 시 describer에게 보내는 지시문 (설명만, 답변·추측 금지)
 export const IMAGE_DESCRIBE_PROMPT = `첨부된 이미지를 한국어로 자세히 설명해줘. 설명만 하고, 질문에 대한 답변이나 추측은 하지 마.
 - 전체 장면과 구도를 먼저 한 줄로 요약해줘.
