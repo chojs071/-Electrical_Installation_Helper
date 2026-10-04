@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { describeImage, streamChatCompletion } from "@/lib/ai";
+import { describeImage, isImageRejection, streamChatCompletion, stripImageParts } from "@/lib/ai";
 import {
   BASE_SYSTEM_PROMPT,
   MAX_HISTORY_MESSAGES,
@@ -238,9 +238,21 @@ export function useChatStore(user: SessionUser | null) {
         );
       };
 
+      // 재시도 전 스트리밍 placeholder 초기화 (부분 출력이 있으면 지움)
+      const clearStreamingMessage = () => {
+        setChats((prev) =>
+          prev.map((c) => {
+            if (c.id !== chatId) return c;
+            const msgs = [...c.messages];
+            if (msgs.length === 0) return c;
+            msgs[msgs.length - 1] = { role: "assistant", content: "" };
+            return { ...c, messages: msgs };
+          })
+        );
+      };
+
       try {
         // 첨부 이미지는 전담 모델이 먼저 한국어로 설명 → 본 답변 컨텍스트로 전달.
-        // 설명 실패 시에도 원본 이미지와 함께 전송하므로 답변은 계속 진행.
         let imageDescription = "";
         if (imageDataUrl) {
           try {
@@ -260,11 +272,36 @@ export function useChatStore(user: SessionUser | null) {
         if (dataContext) systemPrompt += `\n\n[참고 자료]\n${dataContext}`;
         if (refContext) systemPrompt += `\n\n[과거 대화 참고 자료]\n${refContext}`;
 
-        const full = await streamChatCompletion({
-          systemPrompt,
-          messages: messages.slice(-MAX_HISTORY_MESSAGES),
-          onDelta: appendDelta,
-        });
+        const history = messages.slice(-MAX_HISTORY_MESSAGES);
+        const historyHasImage = history.some((m) => typeof m.content !== "string");
+        let full: string;
+        try {
+          full = await streamChatCompletion({
+            systemPrompt,
+            messages: history,
+            onDelta: appendDelta,
+          });
+        } catch (e) {
+          // 텍스트 전용 모델이 이미지를 거부한 경우: 설명 텍스트만으로 재시도
+          if (historyHasImage && imageDescription && isImageRejection(e)) {
+            clearStreamingMessage();
+            full = await streamChatCompletion({
+              systemPrompt,
+              messages: stripImageParts(history),
+              onDelta: appendDelta,
+            });
+          } else if (historyHasImage && isImageRejection(e)) {
+            throw new Error(
+              `🖼️ **현재 모델이 이미지를 처리하지 못했습니다**\n\n` +
+                `이미지가 포함된 요청이 거부되었습니다. 비전(이미지 입력) 지원 모델로 교체하세요.\n` +
+                `- Cloudflare: \`VISION_MODEL\`·\`AI_MODEL\`에 비전 지원 모델 지정 (예: \`gpt-4o-mini\`)\n` +
+                `- 로컬: \`.env\`의 \`VITE_VISION_MODEL\`·\`VITE_AI_MODEL\` 변경 후 dev 재시작\n` +
+                `(원본: ${e instanceof Error ? e.message : String(e)})`
+            );
+          } else {
+            throw e;
+          }
+        }
 
         // AI 응답 저장
         if (user) {
