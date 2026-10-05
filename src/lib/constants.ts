@@ -1,8 +1,8 @@
 // 원본 Python(app.py)과 동일한 상수값
 export const AI_AVATAR_URL =
-  "https://cdn.phototourl.com/free/2026-07-23-15287eb1-a0dc-42f5-895b-ba283e857248.png";
+  "https://i.postimg.cc/BbD8T9d8/aiaikon.png";
 export const SIDEBAR_HEADER_IMAGE =
-  "https://cdn.phototourl.com/free/2026-07-23-b00d3b3d-b411-4d1e-a452-24355967b5ce.png";
+  "https://i.postimg.cc/L8s1W7Pw/seukeulinsyas-2026-10-06-003842.png";
 
 // AI 호출은 항상 same-origin /api/ai 경유.
 // - npm run dev: vite 프록시가 https://ollama.com/v1 로 전달 (CORS 회피)
