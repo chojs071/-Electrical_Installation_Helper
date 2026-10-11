@@ -9,6 +9,14 @@
 
 본 프로젝트는 NAVER OGQ 공모전 출품을 목적으로 제작되었습니다.
 
+## 실행방법
+```bash
+git clone https://github.com/chojs071/-Electrical_Installation_Helper.git
+cd -Electrical_Installation_Helper
+npm install
+npm run dev
+```
+
 ## 주요 기능
 
 - **각 과목 내용에 맞는 KEC규정 알리미**
